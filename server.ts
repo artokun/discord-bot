@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync, existsSync, readdirSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { join, parse } from "path";
 
-const PORT = 3456;
+const PORT = parseInt(process.env.PORT || "3456");
 const UPLOAD_DIR = join(import.meta.dir, "uploads");
 const OUTPUT_DIR = join(import.meta.dir, "output");
 const PUBLIC_DIR = join(import.meta.dir, "public");

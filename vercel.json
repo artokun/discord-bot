@@ -1,0 +1,7 @@
+{
+  "buildCommand": "",
+  "outputDirectory": "public",
+  "rewrites": [
+    { "source": "/api/tiktok/proxy-image", "destination": "/api/tiktok-proxy" }
+  ]
+}
