@@ -67,11 +67,18 @@ function getCookiesPath(): string {
 // --- gallery-dl ---
 
 async function galleryDlJson(url: string): Promise<any[]> {
-  const cookies = getCookiesPath();
-  const proc = Bun.spawn(
-    ["gallery-dl", "--cookies", cookies, "--dump-json", url],
-    { stdout: "pipe", stderr: "pipe" }
-  );
+  const args = ["gallery-dl", "--dump-json"];
+
+  // Cookies are optional — gallery-dl works without them for public posts
+  try {
+    const cookies = getCookiesPath();
+    args.push("--cookies", cookies);
+  } catch {
+    console.log("[gallery-dl] No cookies configured, proceeding without auth");
+  }
+
+  args.push(url);
+  const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
 
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
