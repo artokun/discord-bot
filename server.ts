@@ -12,13 +12,25 @@ for (const dir of [UPLOAD_DIR, OUTPUT_DIR, TIKTOK_CACHE_DIR]) {
 }
 
 // --- TikTok Scraping (gallery-dl) ---
-import { scrapeTikTokProfile, scrapeTikTokPost } from "./src/services/tiktok-scraper";
+import { scrapeTikTokProfile, scrapeTikTokPost, type TikTokCaptionSet } from "./src/services/tiktok-scraper";
 
+// Cache profile scrape results so pagination doesn't re-scrape (5 min TTL)
+const scrapeCache = new Map<string, { sets: TikTokCaptionSet[]; ts: number }>();
+const CACHE_TTL = 5 * 60 * 1000;
 
 async function scrapeTikTok(inputUrl: string) {
   const isProfile = /tiktok\.com\/@[\w.]+\/?$/.test(inputUrl);
+
   if (isProfile) {
-    return scrapeTikTokProfile(inputUrl);
+    const cacheKey = inputUrl.replace(/\/$/, "");
+    const cached = scrapeCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+      console.log(`[scrape] Cache hit for ${cacheKey} (${cached.sets.length} sets)`);
+      return { sets: cached.sets };
+    }
+    const result = await scrapeTikTokProfile(inputUrl);
+    scrapeCache.set(cacheKey, { sets: result.sets, ts: Date.now() });
+    return result;
   } else {
     return scrapeTikTokPost(inputUrl);
   }
@@ -283,14 +295,26 @@ Bun.serve({
 
     // TikTok scraping endpoint
     if (path === "/api/tiktok/scrape" && req.method === "POST") {
-      const { url: tiktokUrl } = (await req.json()) as { url: string };
+      const body = (await req.json()) as { url: string; offset?: number; limit?: number };
+      const tiktokUrl = body.url;
+      const offset = body.offset || 0;
+      const limit = body.limit || 10;
+
       if (!tiktokUrl || !tiktokUrl.includes("tiktok.com")) {
         return Response.json({ error: "Invalid TikTok URL" }, { status: 400 });
       }
 
       try {
         const result = await scrapeTikTok(tiktokUrl);
-        return Response.json(result);
+        const allSets = result.sets;
+        const page = allSets.slice(offset, offset + limit);
+        return Response.json({
+          sets: page,
+          total: allSets.length,
+          offset,
+          limit,
+          hasMore: offset + limit < allSets.length,
+        });
       } catch (err: any) {
         return Response.json({ error: err.message }, { status: 500 });
       }
