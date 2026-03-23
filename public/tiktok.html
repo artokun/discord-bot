@@ -703,8 +703,8 @@
         const data = await response.json();
         $('scrapeProgressFill').style.width = '100%';
 
-        // data can be a single caption set or an array of caption sets
-        const sets = Array.isArray(data) ? data : [data];
+        // API returns { sets: [...] }
+        const sets = data.sets || (Array.isArray(data) ? data : [data]);
 
         let totalSlides = 0;
         for (const set of sets) {
@@ -723,7 +723,7 @@
                 textShadow: slide.textShadow || 'medium',
                 overlayOpacity: slide.hasGradientOverlay ? 0.6 : 0.4,
               } : null),
-              originalImageUrl: slide.imageUrl || null,
+              originalImageUrl: slide.originalImageUrl || slide.imageUrl || null,
             })),
           };
           // If no slides came through, create one empty slide
