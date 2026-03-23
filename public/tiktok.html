@@ -1,0 +1,1454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TikTok Slideshow Maker</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: #08080c;
+      color: #e0e0e8;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Layout */
+    .app-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1.5rem;
+      background: #0e0e14;
+      border-bottom: 1px solid #1a1a24;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .app-bar h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #fe2c55, #25f4ee);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .app-bar-actions { display: flex; gap: 0.5rem; align-items: center; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 340px 1fr 300px;
+      gap: 0;
+      height: calc(100vh - 49px);
+    }
+    @media (max-width: 1100px) {
+      .layout { grid-template-columns: 300px 1fr 260px; }
+    }
+    @media (max-width: 860px) {
+      .layout { grid-template-columns: 1fr; height: auto; }
+    }
+
+    .panel {
+      border-right: 1px solid #1a1a24;
+      overflow-y: auto;
+      padding: 1rem;
+    }
+    .panel:last-child { border-right: none; }
+    .panel-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #555;
+      margin-bottom: 0.75rem;
+    }
+
+    /* Cards */
+    .card {
+      background: #111118;
+      border: 1px solid #1e1e2a;
+      border-radius: 10px;
+      padding: 1rem;
+      margin-bottom: 0.75rem;
+    }
+    .card h3 {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #888;
+      margin-bottom: 0.6rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .badge {
+      background: #fe2c55;
+      color: white;
+      font-size: 0.6rem;
+      padding: 1px 6px;
+      border-radius: 8px;
+      font-weight: 700;
+    }
+    .badge-teal { background: #25f4ee; color: #000; }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      padding: 0.45rem 0.85rem; border: none; border-radius: 6px;
+      font-size: 0.78rem; cursor: pointer; font-weight: 600;
+      transition: all 0.12s;
+    }
+    .btn-primary { background: #fe2c55; color: white; }
+    .btn-primary:hover { background: #ff4468; }
+    .btn-primary:disabled { background: #2a2a35; color: #555; cursor: not-allowed; }
+    .btn-secondary { background: #1a1a24; color: #999; border: 1px solid #252530; }
+    .btn-secondary:hover { background: #222230; color: #ddd; }
+    .btn-teal { background: #25f4ee; color: #000; }
+    .btn-teal:hover { background: #50f7f2; }
+    .btn-sm { padding: 0.35rem 0.6rem; font-size: 0.72rem; }
+    .btn-xs { padding: 0.2rem 0.45rem; font-size: 0.65rem; }
+    .btn-block { width: 100%; justify-content: center; }
+    .btn-danger { background: transparent; color: #fe2c55; border: 1px solid #fe2c55; }
+    .btn-danger:hover { background: #fe2c55; color: white; }
+
+    /* Inputs */
+    .input-row {
+      display: flex;
+      gap: 0.4rem;
+      margin-bottom: 0.5rem;
+    }
+    .input-row input[type="text"], .input-row input[type="url"] {
+      flex: 1;
+      background: #0c0c12;
+      border: 1px solid #1e1e2a;
+      border-radius: 6px;
+      color: #ddd;
+      padding: 0.45rem 0.6rem;
+      font-size: 0.78rem;
+      font-family: inherit;
+    }
+    .input-row input:focus { outline: none; border-color: #fe2c55; }
+
+    /* Drop Zone */
+    .drop-zone {
+      border: 2px dashed #252530;
+      border-radius: 8px;
+      padding: 1.5rem 0.75rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color: #fe2c55; background: rgba(254,44,85,0.03); }
+    .drop-zone input { display: none; }
+    .drop-zone p { color: #555; font-size: 0.78rem; }
+    .drop-zone .sub { font-size: 0.68rem; color: #333; margin-top: 0.25rem; }
+
+    /* Caption Sets */
+    .caption-set {
+      background: #0c0c12;
+      border: 1px solid #1e1e2a;
+      border-radius: 8px;
+      padding: 0.6rem;
+      margin-bottom: 0.5rem;
+      position: relative;
+    }
+    .caption-set .set-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 0.35rem;
+      gap: 0.3rem;
+    }
+    .caption-set .set-label {
+      font-size: 0.65rem;
+      color: #fe2c55;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      flex-shrink: 0;
+    }
+    .caption-set .set-source {
+      font-size: 0.6rem;
+      color: #444;
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 180px;
+    }
+    .caption-set .set-title {
+      font-size: 0.72rem;
+      color: #888;
+      margin-bottom: 0.4rem;
+      line-height: 1.3;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .caption-set .set-actions {
+      display: flex;
+      gap: 0.2rem;
+      flex-shrink: 0;
+    }
+    .caption-set .set-actions button {
+      background: none; border: none; color: #444; cursor: pointer;
+      font-size: 0.78rem; line-height: 1; padding: 2px 4px;
+      border-radius: 3px;
+    }
+    .caption-set .set-actions button:hover { color: #fe2c55; background: rgba(254,44,85,0.1); }
+    .caption-set .set-actions button.copy-btn:hover { color: #25f4ee; background: rgba(37,244,238,0.1); }
+
+    .caption-line {
+      display: flex;
+      gap: 0.3rem;
+      align-items: flex-start;
+      margin-bottom: 0.25rem;
+    }
+    .caption-line .num {
+      font-size: 0.65rem;
+      color: #444;
+      font-weight: 600;
+      min-width: 14px;
+      padding-top: 5px;
+    }
+    .caption-line input {
+      flex: 1;
+      background: #111118;
+      border: 1px solid #1e1e2a;
+      border-radius: 4px;
+      color: #ddd;
+      padding: 4px 6px;
+      font-size: 0.78rem;
+      font-family: inherit;
+    }
+    .caption-line input:focus { outline: none; border-color: #fe2c55; }
+    .caption-line .remove-caption {
+      background: none; border: none; color: #333; cursor: pointer;
+      font-size: 0.75rem; padding: 3px 4px; line-height: 1;
+      border-radius: 3px; flex-shrink: 0;
+    }
+    .caption-line .remove-caption:hover { color: #fe2c55; background: rgba(254,44,85,0.1); }
+
+    .add-caption-btn {
+      background: none; border: 1px dashed #252530; border-radius: 4px;
+      color: #444; font-size: 0.72rem; padding: 3px 8px; cursor: pointer;
+      width: 100%; margin-top: 0.25rem;
+    }
+    .add-caption-btn:hover { border-color: #25f4ee; color: #25f4ee; }
+
+    /* Slide style indicator */
+    .slide-style-indicator {
+      font-size: 0.58rem;
+      color: #25f4ee;
+      background: rgba(37,244,238,0.08);
+      padding: 1px 5px;
+      border-radius: 3px;
+      margin-left: 0.3rem;
+      flex-shrink: 0;
+    }
+
+    /* Image thumbnails */
+    .image-thumbs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.4rem;
+      margin-top: 0.6rem;
+    }
+    .thumb-item {
+      position: relative;
+      aspect-ratio: 9/16;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #1a1a24;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: border-color 0.12s;
+    }
+    .thumb-item:hover { border-color: #333; }
+    .thumb-item.active { border-color: #fe2c55; }
+    .thumb-item img { width: 100%; height: 100%; object-fit: cover; }
+    .thumb-item .remove {
+      position: absolute; top: 3px; right: 3px;
+      background: rgba(0,0,0,0.7); border: none; color: #fe2c55;
+      width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
+      font-size: 0.7rem; display: none; align-items: center; justify-content: center;
+    }
+    .thumb-item:hover .remove { display: flex; }
+
+    /* Canvas Preview Area */
+    .canvas-area {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 1rem;
+      overflow-y: auto;
+    }
+    .canvas-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1rem;
+      width: 100%;
+      max-width: 900px;
+    }
+    .canvas-card {
+      position: relative;
+      background: #111118;
+      border: 1px solid #1e1e2a;
+      border-radius: 10px;
+      overflow: hidden;
+      transition: all 0.15s;
+    }
+    .canvas-card:hover { border-color: #333; }
+    .canvas-card canvas {
+      width: 100%;
+      display: block;
+    }
+    .canvas-card .canvas-label {
+      padding: 0.4rem 0.6rem;
+      font-size: 0.7rem;
+      color: #666;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .canvas-card .canvas-label button {
+      background: #1a1a24;
+      border: 1px solid #252530;
+      color: #888;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.68rem;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .canvas-card .canvas-label button:hover { background: #25f4ee; color: #000; border-color: #25f4ee; }
+
+    .empty-state {
+      text-align: center;
+      padding: 3rem;
+      color: #333;
+    }
+    .empty-state .icon { font-size: 3rem; margin-bottom: 0.75rem; }
+    .empty-state p { font-size: 0.85rem; }
+
+    /* Style Controls */
+    .control-group {
+      margin-bottom: 0.75rem;
+    }
+    .control-group label {
+      display: block;
+      font-size: 0.7rem;
+      color: #666;
+      font-weight: 600;
+      margin-bottom: 0.3rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .control-group select, .control-group input[type="range"], .control-group input[type="color"] {
+      width: 100%;
+      background: #111118;
+      border: 1px solid #1e1e2a;
+      border-radius: 6px;
+      color: #ddd;
+      padding: 0.4rem;
+      font-size: 0.78rem;
+      font-family: inherit;
+    }
+    .control-group select:focus, .control-group input:focus { outline: none; border-color: #fe2c55; }
+    .control-group input[type="range"] { padding: 0; height: 6px; -webkit-appearance: none; appearance: none; background: #1a1a24; }
+    .control-group input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 16px; height: 16px;
+      background: #fe2c55; border-radius: 50%; cursor: pointer;
+    }
+    .range-value {
+      font-size: 0.7rem;
+      color: #888;
+      float: right;
+      margin-top: -1.2rem;
+    }
+    .color-row {
+      display: flex;
+      gap: 0.4rem;
+      align-items: center;
+    }
+    .color-row input[type="color"] {
+      width: 32px; height: 32px; padding: 0;
+      border: 2px solid #252530; cursor: pointer;
+    }
+    .color-row span { font-size: 0.75rem; color: #888; }
+
+    /* Progress */
+    .progress-mini {
+      height: 3px; background: #1a1a24; border-radius: 2px; overflow: hidden; margin: 0.5rem 0;
+    }
+    .progress-mini-fill {
+      height: 100%; background: linear-gradient(90deg, #fe2c55, #25f4ee);
+      transition: width 0.3s;
+    }
+
+    /* Scrape loading spinner */
+    .scrape-loading {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0;
+      font-size: 0.75rem;
+      color: #888;
+    }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid #252530;
+      border-top-color: #fe2c55;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 1.5rem; left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: #25f4ee; color: #000;
+      padding: 0.6rem 1.25rem; border-radius: 8px;
+      font-weight: 600; font-size: 0.82rem;
+      transition: transform 0.3s cubic-bezier(0.16,1,0.3,1);
+      z-index: 200;
+    }
+    .toast.error { background: #fe2c55; color: white; }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* Textarea for reference input */
+    .ref-textarea {
+      width: 100%;
+      min-height: 70px;
+      background: #0c0c12;
+      border: 1px solid #1e1e2a;
+      border-radius: 6px;
+      color: #ddd;
+      padding: 0.5rem;
+      font-family: inherit;
+      font-size: 0.78rem;
+      resize: vertical;
+      line-height: 1.5;
+    }
+    .ref-textarea:focus { outline: none; border-color: #fe2c55; }
+    .ref-textarea::placeholder { color: #333; }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #1a1a24;
+      margin: 0.75rem 0;
+    }
+
+    .action-row { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.5rem; }
+
+    .hidden { display: none !important; }
+
+    /* Scrollbar styling */
+    .panel::-webkit-scrollbar, .canvas-area::-webkit-scrollbar { width: 6px; }
+    .panel::-webkit-scrollbar-track, .canvas-area::-webkit-scrollbar-track { background: transparent; }
+    .panel::-webkit-scrollbar-thumb, .canvas-area::-webkit-scrollbar-thumb { background: #252530; border-radius: 3px; }
+    .panel::-webkit-scrollbar-thumb:hover, .canvas-area::-webkit-scrollbar-thumb:hover { background: #333; }
+  </style>
+</head>
+<body>
+  <!-- Top Bar -->
+  <div class="app-bar">
+    <h1>TikTok Slideshow Maker</h1>
+    <div class="app-bar-actions">
+      <button class="btn btn-secondary btn-sm" id="shuffleBtn" disabled>Shuffle Mix</button>
+      <button class="btn btn-teal btn-sm" id="exportAllBtn" disabled>Export All Images</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <!-- LEFT PANEL: Caption Sets -->
+    <div class="panel" id="captionPanel">
+      <div class="panel-title">Caption Sets</div>
+
+      <!-- Scrape from TikTok URL -->
+      <div class="card">
+        <h3>Scrape from TikTok</h3>
+        <div class="input-row">
+          <input type="url" id="scrapeUrlInput" placeholder="Paste TikTok post or profile URL...">
+          <button class="btn btn-primary btn-sm" id="scrapeBtn">Scrape</button>
+        </div>
+        <div class="hidden" id="scrapeLoading">
+          <div class="scrape-loading">
+            <div class="spinner"></div>
+            <span id="scrapeStatus">Scraping TikTok...</span>
+          </div>
+          <div class="progress-mini">
+            <div class="progress-mini-fill" id="scrapeProgressFill" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Caption sets list -->
+      <div class="card">
+        <h3>Caption Sets <span class="badge" id="setCountBadge">0</span></h3>
+        <p style="font-size:0.7rem;color:#444;margin-bottom:0.5rem;">Each set = one slideshow's captions (one caption per slide)</p>
+        <div id="captionSetsContainer"></div>
+        <button class="btn btn-secondary btn-sm btn-block" id="addSetBtn" style="margin-top:0.5rem;">+ Add Manual Set</button>
+      </div>
+
+      <!-- AI Generate -->
+      <div class="card">
+        <h3>AI Caption Generator</h3>
+        <textarea class="ref-textarea" id="aiPrompt" placeholder="Describe the vibe or paste reference captions...&#10;e.g. 'soft aesthetic, self-care, healing energy'"></textarea>
+        <div class="action-row">
+          <select id="aiSlideCount" style="background:#111118;border:1px solid #1e1e2a;border-radius:4px;color:#ddd;padding:4px;font-size:0.75rem;">
+            <option value="3">3 slides</option>
+            <option value="4">4 slides</option>
+            <option value="5" selected>5 slides</option>
+            <option value="7">7 slides</option>
+            <option value="10">10 slides</option>
+          </select>
+          <button class="btn btn-primary btn-sm" id="aiGenerateBtn">Generate Set</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER: Canvas Preview -->
+    <div class="canvas-area" id="canvasArea">
+      <div class="empty-state" id="emptyState">
+        <div class="icon">&#9634;</div>
+        <p>Upload images + add captions, then click<br><strong>Shuffle Mix</strong> to generate slides</p>
+      </div>
+      <div class="canvas-grid hidden" id="canvasGrid"></div>
+    </div>
+
+    <!-- RIGHT PANEL: Images + Style -->
+    <div class="panel">
+      <div class="panel-title">Your Images</div>
+
+      <div class="card">
+        <h3>Upload Images <span class="badge badge-teal" id="imgCountBadge">0</span></h3>
+        <div class="drop-zone" id="imgDropZone">
+          <p>Drop your photos here</p>
+          <p class="sub">These get paired with caption sets</p>
+          <input type="file" id="imgInput" accept="image/*" multiple>
+        </div>
+        <div class="image-thumbs" id="imgThumbs"></div>
+      </div>
+
+      <div class="panel-title" style="margin-top:0.5rem;">Default Style</div>
+
+      <div class="card">
+        <div class="control-group">
+          <label>Position</label>
+          <select id="textPosition">
+            <option value="bottom">Bottom (gradient overlay)</option>
+            <option value="center">Center</option>
+            <option value="top">Top</option>
+            <option value="bottom-box">Bottom (solid box)</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Font</label>
+          <select id="textFont">
+            <option value="system-ui, sans-serif">System (Clean)</option>
+            <option value="Georgia, serif">Georgia (Serif)</option>
+            <option value="'Courier New', monospace">Courier (Mono)</option>
+            <option value="Impact, sans-serif">Impact (Bold)</option>
+            <option value="'Trebuchet MS', sans-serif">Trebuchet</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Font Size</label>
+          <input type="range" id="textSize" min="16" max="72" value="32">
+          <span class="range-value" id="textSizeVal">32px</span>
+        </div>
+
+        <div class="control-group">
+          <label>Font Weight</label>
+          <select id="textWeight">
+            <option value="400">Regular (400)</option>
+            <option value="600" selected>Semi-Bold (600)</option>
+            <option value="700">Bold (700)</option>
+            <option value="900">Black (900)</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Text Color</label>
+          <div class="color-row">
+            <input type="color" id="textColor" value="#ffffff">
+            <span id="textColorVal">#ffffff</span>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label>Text Shadow</label>
+          <select id="textShadow">
+            <option value="strong">Strong</option>
+            <option value="medium" selected>Medium</option>
+            <option value="light">Light</option>
+            <option value="none">None</option>
+            <option value="outline">Outline</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Text Align</label>
+          <select id="textAlign">
+            <option value="center" selected>Center</option>
+            <option value="left">Left</option>
+            <option value="right">Right</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Overlay Darkness</label>
+          <input type="range" id="overlayOpacity" min="0" max="100" value="50">
+          <span class="range-value" id="overlayOpacityVal">50%</span>
+        </div>
+
+        <hr class="divider">
+        <button class="btn btn-secondary btn-sm btn-block" id="rerenderBtn">Re-render All</button>
+      </div>
+
+      <div class="card">
+        <div class="control-group">
+          <label>Export Size</label>
+          <select id="exportSize">
+            <option value="1080x1920">1080 x 1920 (TikTok)</option>
+            <option value="1080x1350">1080 x 1350 (Instagram)</option>
+            <option value="1080x1080">1080 x 1080 (Square)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ===================================================
+    //  STATE
+    // ===================================================
+
+    // Caption set data model:
+    // {
+    //   id: number,
+    //   source: string,        // URL or 'manual' or 'ai-generated'
+    //   title: string,         // post description
+    //   slides: [
+    //     {
+    //       text: string,
+    //       style: { position, fontSize, textAlign, fontWeight, textColor, textShadow, overlayOpacity } | null,
+    //       originalImageUrl: string | null,
+    //     }
+    //   ]
+    // }
+    let captionSets = [];
+    let userImages = [];       // Array of { id, file, url }
+    let renderedSlides = [];   // Array of { canvas, captionSetIdx, slideIdx, imageUrl, caption, style }
+    let nextSetId = 1;
+    let nextImgId = 0;
+
+    // ===================================================
+    //  ELEMENTS
+    // ===================================================
+    const $ = id => document.getElementById(id);
+    const captionSetsContainer = $('captionSetsContainer');
+    const canvasGrid = $('canvasGrid');
+    const emptyState = $('emptyState');
+    const imgThumbs = $('imgThumbs');
+
+    // ===================================================
+    //  SCRAPE FROM TIKTOK
+    // ===================================================
+    const scrapeBtn = $('scrapeBtn');
+    const scrapeUrlInput = $('scrapeUrlInput');
+    const scrapeLoading = $('scrapeLoading');
+
+    scrapeBtn.addEventListener('click', () => startScrape());
+    scrapeUrlInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') startScrape();
+    });
+
+    async function startScrape() {
+      const url = scrapeUrlInput.value.trim();
+      if (!url) {
+        showToast('Paste a TikTok URL first', true);
+        return;
+      }
+
+      scrapeBtn.disabled = true;
+      scrapeLoading.classList.remove('hidden');
+      $('scrapeStatus').textContent = 'Scraping TikTok...';
+      $('scrapeProgressFill').style.width = '30%';
+
+      try {
+        const response = await fetch('/api/tiktok/scrape', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
+
+        $('scrapeProgressFill').style.width = '80%';
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `Scrape failed (${response.status})`);
+        }
+
+        const data = await response.json();
+        $('scrapeProgressFill').style.width = '100%';
+
+        // data can be a single caption set or an array of caption sets
+        const sets = Array.isArray(data) ? data : [data];
+
+        let totalSlides = 0;
+        for (const set of sets) {
+          const captionSet = {
+            id: nextSetId++,
+            source: url,
+            title: set.title || set.description || '',
+            slides: (set.slides || []).map(slide => ({
+              text: slide.text || '',
+              style: slide.style || (slide.position ? {
+                position: slide.position || 'bottom',
+                fontSize: parseFontSize(slide.fontSize),
+                textAlign: slide.textAlign || 'center',
+                fontWeight: slide.fontWeight || '600',
+                textColor: slide.textColor || '#ffffff',
+                textShadow: slide.textShadow || 'medium',
+                overlayOpacity: slide.hasGradientOverlay ? 0.6 : 0.4,
+              } : null),
+              originalImageUrl: slide.imageUrl || null,
+            })),
+          };
+          // If no slides came through, create one empty slide
+          if (captionSet.slides.length === 0) {
+            captionSet.slides.push({ text: '', style: null, originalImageUrl: null });
+          }
+          captionSets.push(captionSet);
+          totalSlides += captionSet.slides.length;
+        }
+
+        renderCaptionSets();
+        scrapeUrlInput.value = '';
+        showToast(`Scraped ${sets.length} set(s) with ${totalSlides} slides`);
+      } catch (err) {
+        showToast(err.message || 'Scrape failed', true);
+      } finally {
+        scrapeBtn.disabled = false;
+        scrapeLoading.classList.add('hidden');
+        $('scrapeProgressFill').style.width = '0%';
+      }
+    }
+
+    function parseFontSize(sizeStr) {
+      if (!sizeStr) return 32;
+      if (typeof sizeStr === 'number') return sizeStr;
+      const map = { small: 24, medium: 32, large: 42 };
+      return map[sizeStr] || parseInt(sizeStr) || 32;
+    }
+
+    // ===================================================
+    //  CAPTION SETS
+    // ===================================================
+    $('addSetBtn').addEventListener('click', () => {
+      captionSets.push({
+        id: nextSetId++,
+        source: 'manual',
+        title: '',
+        slides: [{ text: '', style: null, originalImageUrl: null }],
+      });
+      renderCaptionSets();
+    });
+
+    function renderCaptionSets() {
+      $('setCountBadge').textContent = captionSets.length;
+
+      captionSetsContainer.innerHTML = captionSets.map((set, si) => {
+        const sourceLabel = set.source === 'manual' ? 'Manual' :
+                            set.source === 'ai-generated' ? 'AI Generated' :
+                            truncateUrl(set.source);
+
+        return `
+          <div class="caption-set" data-set-idx="${si}">
+            <div class="set-header">
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;gap:0.4rem;margin-bottom:0.15rem;">
+                  <span class="set-label">Set ${si + 1} (${set.slides.length} slides)</span>
+                  <span class="set-source" title="${escHtml(set.source)}">${escHtml(sourceLabel)}</span>
+                </div>
+                ${set.title ? `<div class="set-title" title="${escHtml(set.title)}">${escHtml(set.title)}</div>` : ''}
+              </div>
+              <div class="set-actions">
+                <button class="copy-btn" onclick="duplicateSet(${si})" title="Duplicate set">&#x2398;</button>
+                <button onclick="removeSet(${si})" title="Remove set">&times;</button>
+              </div>
+            </div>
+            ${set.slides.map((slide, ci) => `
+              <div class="caption-line">
+                <span class="num">${ci + 1}.</span>
+                <input type="text" value="${escHtml(slide.text)}" placeholder="Slide ${ci + 1} caption..."
+                       oninput="updateSlideText(${si},${ci},this.value)">
+                ${slide.style ? '<span class="slide-style-indicator">styled</span>' : ''}
+                <button class="remove-caption" onclick="removeCaptionFromSet(${si},${ci})" title="Remove slide">&times;</button>
+              </div>
+            `).join('')}
+            <button class="add-caption-btn" onclick="addCaptionToSet(${si})">+ slide</button>
+          </div>
+        `;
+      }).join('');
+
+      updateActionStates();
+    }
+
+    function updateSlideText(si, ci, value) {
+      captionSets[si].slides[ci].text = value;
+    }
+
+    function removeSet(si) {
+      captionSets.splice(si, 1);
+      renderCaptionSets();
+    }
+
+    function duplicateSet(si) {
+      const original = captionSets[si];
+      const copy = {
+        id: nextSetId++,
+        source: original.source,
+        title: original.title + ' (copy)',
+        slides: original.slides.map(s => ({
+          text: s.text,
+          style: s.style ? { ...s.style } : null,
+          originalImageUrl: s.originalImageUrl,
+        })),
+      };
+      captionSets.splice(si + 1, 0, copy);
+      renderCaptionSets();
+      showToast('Set duplicated');
+    }
+
+    function addCaptionToSet(si) {
+      captionSets[si].slides.push({ text: '', style: null, originalImageUrl: null });
+      renderCaptionSets();
+    }
+
+    function removeCaptionFromSet(si, ci) {
+      if (captionSets[si].slides.length <= 1) {
+        // Remove the whole set if it's the last slide
+        removeSet(si);
+        return;
+      }
+      captionSets[si].slides.splice(ci, 1);
+      renderCaptionSets();
+    }
+
+    function escHtml(s) {
+      if (!s) return '';
+      return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function truncateUrl(url) {
+      if (!url) return '';
+      try {
+        const u = new URL(url);
+        const path = u.pathname.replace(/\/$/, '');
+        if (path.length > 30) return path.slice(0, 27) + '...';
+        return path || u.hostname;
+      } catch {
+        return url.length > 30 ? url.slice(0, 27) + '...' : url;
+      }
+    }
+
+    // ===================================================
+    //  IMAGE UPLOAD
+    // ===================================================
+    const imgDropZone = $('imgDropZone');
+    const imgInput = $('imgInput');
+
+    imgDropZone.addEventListener('click', () => imgInput.click());
+    imgDropZone.addEventListener('dragover', e => { e.preventDefault(); imgDropZone.classList.add('dragover'); });
+    imgDropZone.addEventListener('dragleave', () => imgDropZone.classList.remove('dragover'));
+    imgDropZone.addEventListener('drop', e => { e.preventDefault(); imgDropZone.classList.remove('dragover'); addUserImages(e.dataTransfer.files); });
+    imgInput.addEventListener('change', () => { addUserImages(imgInput.files); imgInput.value = ''; });
+
+    function addUserImages(files) {
+      for (const file of files) {
+        if (!file.type.startsWith('image/')) continue;
+        userImages.push({ id: nextImgId++, file, url: URL.createObjectURL(file) });
+      }
+      renderImageThumbs();
+      updateActionStates();
+    }
+
+    function renderImageThumbs() {
+      $('imgCountBadge').textContent = userImages.length;
+      imgThumbs.innerHTML = userImages.map((img, i) => `
+        <div class="thumb-item">
+          <img src="${img.url}" alt="Photo ${i + 1}">
+          <button class="remove" onclick="removeImage(${i})">&times;</button>
+        </div>
+      `).join('');
+    }
+
+    function removeImage(idx) {
+      URL.revokeObjectURL(userImages[idx].url);
+      userImages.splice(idx, 1);
+      renderImageThumbs();
+      updateActionStates();
+    }
+
+    // ===================================================
+    //  AI CAPTION GENERATOR
+    // ===================================================
+    $('aiGenerateBtn').addEventListener('click', () => {
+      const prompt = $('aiPrompt').value.trim();
+      const count = parseInt($('aiSlideCount').value);
+
+      // Collect reference captions from existing sets
+      const refCaptions = [];
+      captionSets.forEach(set => set.slides.forEach(s => {
+        if (s.text.trim()) refCaptions.push(s.text.trim());
+      }));
+
+      let generated;
+      if (refCaptions.length > 0) {
+        generated = generateFromReference(refCaptions, count);
+      } else if (prompt) {
+        generated = generateFromVibe(prompt, count);
+      } else {
+        showToast('Add reference captions or describe a vibe', true);
+        return;
+      }
+
+      captionSets.push({
+        id: nextSetId++,
+        source: 'ai-generated',
+        title: prompt || 'Remixed from references',
+        slides: generated.map(text => ({
+          text,
+          style: null,
+          originalImageUrl: null,
+        })),
+      });
+      renderCaptionSets();
+      showToast('Generated new caption set');
+    });
+
+    function generateFromReference(refs, count) {
+      const phrases = refs.map(r => r.toLowerCase().replace(/[.!?,]$/g, ''));
+
+      const structures = [
+        () => remixPhrase(phrases),
+        () => combineFragments(phrases),
+        () => invertSentiment(phrases),
+        () => addEmphasis(remixPhrase(phrases)),
+      ];
+
+      const result = [];
+      for (let i = 0; i < count; i++) {
+        const fn = structures[i % structures.length];
+        result.push(fn());
+      }
+      return result;
+    }
+
+    function remixPhrase(phrases) {
+      const p = phrases[Math.floor(Math.random() * phrases.length)];
+      const words = p.split(' ');
+      const swapWords = {
+        'never': 'always', 'always': 'never', 'love': 'need', 'need': 'love',
+        'you': 'they', 'they': 'you', 'stop': 'start', 'start': 'stop',
+        'first': 'last', 'last': 'first', 'good': 'real', 'real': 'good',
+        'old': 'new', 'new': 'old', 'hard': 'easy', 'easy': 'hard',
+        'happy': 'free', 'sad': 'lost', 'lost': 'found', 'found': 'lost',
+        'truth': 'lesson', 'lesson': 'truth', 'dark': 'bright', 'bright': 'dark',
+        'weak': 'strong', 'strong': 'weak', 'quiet': 'loud', 'loud': 'quiet',
+        'broken': 'whole', 'whole': 'broken', 'fear': 'hope', 'hope': 'fear',
+      };
+      return words.map(w => {
+        const lower = w.toLowerCase();
+        return (Math.random() > 0.7 && swapWords[lower]) ? swapWords[lower] : w;
+      }).join(' ');
+    }
+
+    function combineFragments(phrases) {
+      if (phrases.length < 2) return phrases[0] || 'new caption';
+      const a = phrases[Math.floor(Math.random() * phrases.length)].split(' ');
+      const b = phrases[Math.floor(Math.random() * phrases.length)].split(' ');
+      const mid = Math.floor(a.length / 2);
+      return [...a.slice(0, mid), ...b.slice(Math.floor(b.length / 2))].join(' ');
+    }
+
+    function invertSentiment(phrases) {
+      const p = phrases[Math.floor(Math.random() * phrases.length)];
+      const inversions = [
+        [/^the worst/i, 'the best'], [/^the best/i, 'the worst'],
+        [/nobody/i, 'everybody'], [/everybody/i, 'nobody'],
+        [/^don't/i, 'always'], [/^always/i, 'never'],
+        [/hurts/i, 'heals'], [/heals/i, 'hurts'],
+        [/can't/i, 'can'], [/^never/i, 'always'],
+        [/wrong/i, 'right'], [/right/i, 'wrong'],
+        [/hate/i, 'love'], [/love/i, 'appreciate'],
+        [/ending/i, 'beginning'], [/beginning/i, 'ending'],
+      ];
+      for (const [pat, rep] of inversions) {
+        if (pat.test(p)) return p.replace(pat, rep);
+      }
+      return 'the opposite of ' + p;
+    }
+
+    function addEmphasis(phrase) {
+      const emphases = [
+        s => s + ' fr',
+        s => s + ' and it shows',
+        s => 'honestly ' + s,
+        s => s + ' >>',
+        s => 'reminder: ' + s,
+        s => s + ' (real talk)',
+        s => 'pov: ' + s,
+        s => s + ' no cap',
+        s => 'the way ' + s,
+        s => s + ' period.',
+      ];
+      return emphases[Math.floor(Math.random() * emphases.length)](phrase);
+    }
+
+    function generateFromVibe(vibe, count) {
+      const vibeWords = vibe.toLowerCase().split(/[\s,]+/);
+      const vibeTemplates = {
+        aesthetic: ['visual poetry', 'curated chaos', 'every detail matters', 'the art of less', 'effortlessly this', 'chasing the aesthetic', 'details over everything', 'mood: curated'],
+        healing: ['healing isn\'t linear', 'choosing peace daily', 'letting go looks like this', 'the calm after the storm', 'growth in silence', 'peace over everything', 'the healing era', 'rest is resistance'],
+        motivation: ['discipline over everything', 'built different', 'no shortcuts, just consistency', 'the grind is the glory', 'watch and learn', 'levels to this', 'outwork everyone quietly', 'results loading...'],
+        love: ['love in every detail', 'the little things matter most', 'this kind of love', 'softly, completely', 'you deserve this', 'love like this exists', 'forever kind of feeling', 'love without conditions'],
+        'self-care': ['protecting my energy', 'rest is productive', 'boundaries are self love', 'pouring into myself', 'glow from within', 'choosing myself daily', 'inner peace is expensive', 'self love is the best love'],
+        confidence: ['unapologetically me', 'main character energy', 'built this from scratch', 'no permission needed', 'the glow up is real', 'different breed', 'can\'t be replicated', 'she just hits different'],
+        travel: ['wanderlust activated', 'not all who wander are lost', 'explore more worry less', 'passport ready', 'chasing sunsets', 'new city new me', 'adventure awaits', 'take me back'],
+        food: ['eat first think later', 'chef\'s kiss', 'food is love', 'taste over everything', 'obsessed with this recipe', 'comfort food energy', 'this hits different', 'cooking is therapy'],
+        fitness: ['no days off', 'earn your body', 'sweat now shine later', 'discipline equals freedom', 'stronger every day', 'the grind never stops', 'train insane or remain the same', 'results speak'],
+        default: ['this hits different', 'no caption needed', 'if you know, you know', 'the vibe is everything', 'say less', 'iykyk', 'core memory unlocked', 'living for this'],
+      };
+
+      // Find matching vibe
+      for (const [key, templates] of Object.entries(vibeTemplates)) {
+        if (vibeWords.some(w => key.includes(w) || w.includes(key))) {
+          const shuffled = [...templates].sort(() => Math.random() - 0.5);
+          return shuffled.slice(0, count);
+        }
+      }
+
+      const shuffled = [...vibeTemplates.default].sort(() => Math.random() - 0.5);
+      return shuffled.slice(0, count);
+    }
+
+    // ===================================================
+    //  SHUFFLE & RENDER
+    // ===================================================
+    $('shuffleBtn').addEventListener('click', () => generateSlides());
+    $('rerenderBtn').addEventListener('click', () => rerenderAll());
+
+    function generateSlides() {
+      if (!userImages.length || !captionSets.length) {
+        showToast('Need images + caption sets', true);
+        return;
+      }
+
+      renderedSlides = [];
+
+      // For each caption set, randomly assign images to slides
+      captionSets.forEach((set, si) => {
+        const shuffledImgs = [...userImages].sort(() => Math.random() - 0.5);
+        set.slides.forEach((slide, ci) => {
+          if (!slide.text.trim()) return;
+          const img = shuffledImgs[ci % shuffledImgs.length];
+          // Resolve the style: per-slide style takes priority, then defaults
+          const resolvedStyle = resolveStyle(slide.style);
+          renderedSlides.push({
+            caption: slide.text,
+            imageUrl: img.url,
+            captionSetIdx: si,
+            slideIdx: ci,
+            style: resolvedStyle,
+            canvas: null,
+          });
+        });
+      });
+
+      renderAllCanvases();
+    }
+
+    // ===================================================
+    //  STYLE RESOLUTION
+    // ===================================================
+
+    function getDefaultStyle() {
+      return {
+        position: $('textPosition').value,
+        font: $('textFont').value,
+        fontSize: parseInt($('textSize').value),
+        fontWeight: $('textWeight').value,
+        textColor: $('textColor').value,
+        textShadow: $('textShadow').value,
+        textAlign: $('textAlign').value,
+        overlayOpacity: parseInt($('overlayOpacity').value) / 100,
+      };
+    }
+
+    function resolveStyle(slideStyle) {
+      const defaults = getDefaultStyle();
+      if (!slideStyle) return defaults;
+
+      // Per-slide style overrides defaults where defined
+      return {
+        position: slideStyle.position || defaults.position,
+        font: slideStyle.font || defaults.font,
+        fontSize: slideStyle.fontSize || defaults.fontSize,
+        fontWeight: slideStyle.fontWeight || defaults.fontWeight,
+        textColor: slideStyle.textColor || defaults.textColor,
+        textShadow: slideStyle.textShadow || defaults.textShadow,
+        textAlign: slideStyle.textAlign || defaults.textAlign,
+        overlayOpacity: slideStyle.overlayOpacity != null ? slideStyle.overlayOpacity : defaults.overlayOpacity,
+      };
+    }
+
+    // ===================================================
+    //  CANVAS RENDERING
+    // ===================================================
+
+    async function renderAllCanvases() {
+      emptyState.classList.add('hidden');
+      canvasGrid.classList.remove('hidden');
+      canvasGrid.innerHTML = '';
+
+      const [w, h] = $('exportSize').value.split('x').map(Number);
+
+      for (let i = 0; i < renderedSlides.length; i++) {
+        const slide = renderedSlides[i];
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+
+        // Re-resolve style in case defaults changed
+        const setIdx = slide.captionSetIdx;
+        const sIdx = slide.slideIdx;
+        if (captionSets[setIdx] && captionSets[setIdx].slides[sIdx]) {
+          slide.style = resolveStyle(captionSets[setIdx].slides[sIdx].style);
+        }
+
+        await renderSlide(canvas, slide.imageUrl, slide.caption, slide.style);
+        slide.canvas = canvas;
+
+        const card = document.createElement('div');
+        card.className = 'canvas-card';
+
+        const previewCanvas = document.createElement('canvas');
+        previewCanvas.width = w;
+        previewCanvas.height = h;
+        previewCanvas.style.width = '100%';
+        previewCanvas.getContext('2d').drawImage(canvas, 0, 0);
+
+        const label = document.createElement('div');
+        label.className = 'canvas-label';
+        label.innerHTML = `
+          <span>Set ${slide.captionSetIdx + 1}, Slide ${slide.slideIdx + 1}</span>
+          <button onclick="exportSingle(${i})">Save</button>
+        `;
+
+        card.appendChild(previewCanvas);
+        card.appendChild(label);
+        canvasGrid.appendChild(card);
+      }
+
+      updateActionStates();
+      showToast(`Rendered ${renderedSlides.length} slides`);
+    }
+
+    async function rerenderAll() {
+      if (!renderedSlides.length) return;
+      const [w, h] = $('exportSize').value.split('x').map(Number);
+
+      const cards = canvasGrid.querySelectorAll('.canvas-card');
+      for (let i = 0; i < renderedSlides.length; i++) {
+        const slide = renderedSlides[i];
+
+        // Re-resolve style from current defaults + per-slide overrides
+        const setIdx = slide.captionSetIdx;
+        const sIdx = slide.slideIdx;
+        if (captionSets[setIdx] && captionSets[setIdx].slides[sIdx]) {
+          slide.style = resolveStyle(captionSets[setIdx].slides[sIdx].style);
+          slide.caption = captionSets[setIdx].slides[sIdx].text;
+        } else {
+          slide.style = getDefaultStyle();
+        }
+
+        slide.canvas.width = w;
+        slide.canvas.height = h;
+        await renderSlide(slide.canvas, slide.imageUrl, slide.caption, slide.style);
+
+        const previewCanvas = cards[i]?.querySelector('canvas');
+        if (previewCanvas) {
+          previewCanvas.width = w;
+          previewCanvas.height = h;
+          previewCanvas.getContext('2d').drawImage(slide.canvas, 0, 0);
+        }
+      }
+      showToast('Re-rendered all slides');
+    }
+
+    /**
+     * Render a single slide onto a canvas.
+     * @param {HTMLCanvasElement} canvas
+     * @param {string} imageUrl
+     * @param {string} caption
+     * @param {object} styleOverrides - { position, font, fontSize, fontWeight, textColor, textShadow, textAlign, overlayOpacity }
+     */
+    function renderSlide(canvas, imageUrl, caption, styleOverrides) {
+      const style = styleOverrides || getDefaultStyle();
+
+      return new Promise((resolve) => {
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+
+        img.onload = () => {
+          // Draw image (cover fit)
+          const imgRatio = img.width / img.height;
+          const canvasRatio = w / h;
+          let sx = 0, sy = 0, sw = img.width, sh = img.height;
+          if (imgRatio > canvasRatio) {
+            sw = img.height * canvasRatio;
+            sx = (img.width - sw) / 2;
+          } else {
+            sh = img.width / canvasRatio;
+            sy = (img.height - sh) / 2;
+          }
+          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+
+          drawTextOverlay(ctx, w, h, caption, style);
+          resolve();
+        };
+
+        img.onerror = () => {
+          // Fallback: dark background with error message
+          ctx.fillStyle = '#1a1a24';
+          ctx.fillRect(0, 0, w, h);
+          ctx.fillStyle = '#555';
+          ctx.font = `600 ${24 * (w / 400)}px system-ui`;
+          ctx.textAlign = 'center';
+          ctx.fillText('Image failed to load', w / 2, h / 2);
+
+          // Still render the caption on the dark background
+          drawTextOverlay(ctx, w, h, caption, style);
+          resolve();
+        };
+
+        img.src = imageUrl;
+      });
+    }
+
+    function drawTextOverlay(ctx, w, h, caption, style) {
+      if (!caption || !caption.trim()) return;
+
+      const position = style.position || 'bottom';
+      const font = style.font || 'system-ui, sans-serif';
+      const fontSize = style.fontSize || 32;
+      const fontWeight = style.fontWeight || '600';
+      const textColor = style.textColor || '#ffffff';
+      const textShadow = style.textShadow || 'medium';
+      const textAlign = style.textAlign || 'center';
+      const overlayAlpha = style.overlayOpacity != null ? style.overlayOpacity : 0.5;
+
+      // Scale font size for canvas resolution (reference width: 400px)
+      const scale = w / 400;
+      const scaledFontSize = Math.round(fontSize * scale);
+      const padding = Math.round(24 * scale);
+      const lineHeight = scaledFontSize * 1.35;
+
+      // Draw overlay
+      if (position === 'bottom') {
+        const grad = ctx.createLinearGradient(0, h * 0.45, 0, h);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(0.5, `rgba(0,0,0,${overlayAlpha * 0.3})`);
+        grad.addColorStop(1, `rgba(0,0,0,${overlayAlpha})`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, h * 0.45, w, h * 0.55);
+      } else if (position === 'bottom-box') {
+        // First set up text to measure height
+        ctx.font = `${fontWeight} ${scaledFontSize}px ${font}`;
+        const maxWidth = w - padding * 2;
+        const lines = wrapText(ctx, caption, maxWidth);
+        const totalTextHeight = lines.length * lineHeight;
+        const boxH = totalTextHeight + padding * 3;
+
+        ctx.fillStyle = `rgba(0,0,0,${overlayAlpha})`;
+        ctx.fillRect(0, h - boxH, w, boxH);
+      } else if (position === 'center') {
+        ctx.fillStyle = `rgba(0,0,0,${overlayAlpha * 0.5})`;
+        ctx.fillRect(0, 0, w, h);
+      } else if (position === 'top') {
+        const grad = ctx.createLinearGradient(0, 0, 0, h * 0.55);
+        grad.addColorStop(0, `rgba(0,0,0,${overlayAlpha})`);
+        grad.addColorStop(0.5, `rgba(0,0,0,${overlayAlpha * 0.3})`);
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h * 0.55);
+      }
+
+      // Text setup
+      ctx.font = `${fontWeight} ${scaledFontSize}px ${font}`;
+      ctx.fillStyle = textColor;
+      ctx.textAlign = textAlign;
+      ctx.textBaseline = 'top';
+
+      // Shadow
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+      if (textShadow === 'strong') {
+        ctx.shadowColor = 'rgba(0,0,0,0.85)';
+        ctx.shadowBlur = 14 * scale;
+        ctx.shadowOffsetY = 2 * scale;
+      } else if (textShadow === 'medium') {
+        ctx.shadowColor = 'rgba(0,0,0,0.6)';
+        ctx.shadowBlur = 6 * scale;
+        ctx.shadowOffsetY = 1 * scale;
+      } else if (textShadow === 'light') {
+        ctx.shadowColor = 'rgba(0,0,0,0.3)';
+        ctx.shadowBlur = 3 * scale;
+      } else if (textShadow === 'outline') {
+        ctx.shadowBlur = 0;
+      } else {
+        ctx.shadowBlur = 0;
+      }
+
+      // Word wrap
+      const maxWidth = w - padding * 2;
+      const lines = wrapText(ctx, caption, maxWidth);
+
+      // Compute text Y position
+      const totalTextHeight = lines.length * lineHeight;
+      let textX = textAlign === 'center' ? w / 2 : textAlign === 'right' ? w - padding : padding;
+      let textY;
+
+      if (position === 'bottom' || position === 'bottom-box') {
+        textY = h - totalTextHeight - padding * 1.5;
+      } else if (position === 'top') {
+        textY = padding * 2.5;
+      } else {
+        // center
+        textY = (h - totalTextHeight) / 2;
+      }
+
+      // Draw text lines
+      lines.forEach((line, i) => {
+        const y = textY + i * lineHeight;
+        if (textShadow === 'outline') {
+          ctx.save();
+          ctx.shadowBlur = 0;
+          ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+          ctx.lineWidth = 4 * scale;
+          ctx.lineJoin = 'round';
+          ctx.strokeText(line, textX, y);
+          ctx.restore();
+        }
+        ctx.fillText(line, textX, y);
+      });
+
+      // Reset shadow
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+    }
+
+    function wrapText(ctx, text, maxWidth) {
+      if (!text) return [''];
+      const words = text.split(' ');
+      const lines = [];
+      let current = '';
+      for (const word of words) {
+        const test = current ? current + ' ' + word : word;
+        if (ctx.measureText(test).width > maxWidth && current) {
+          lines.push(current);
+          current = word;
+        } else {
+          current = test;
+        }
+      }
+      if (current) lines.push(current);
+      return lines.length ? lines : [''];
+    }
+
+    // ===================================================
+    //  EXPORT
+    // ===================================================
+    function exportSingle(idx) {
+      const slide = renderedSlides[idx];
+      if (!slide?.canvas) return;
+      slide.canvas.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `slide-set${slide.captionSetIdx + 1}-${slide.slideIdx + 1}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }, 'image/png');
+    }
+
+    $('exportAllBtn').addEventListener('click', async () => {
+      if (!renderedSlides.length) return;
+
+      for (let i = 0; i < renderedSlides.length; i++) {
+        const slide = renderedSlides[i];
+        await new Promise(resolve => {
+          slide.canvas.toBlob(blob => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `slide-set${slide.captionSetIdx + 1}-${slide.slideIdx + 1}.png`;
+            a.click();
+            URL.revokeObjectURL(url);
+            setTimeout(resolve, 200); // Stagger downloads
+          }, 'image/png');
+        });
+      }
+      showToast(`Exported ${renderedSlides.length} images`);
+    });
+
+    // ===================================================
+    //  UI HELPERS
+    // ===================================================
+    function updateActionStates() {
+      const hasNonEmptyCaption = captionSets.some(s => s.slides.some(sl => sl.text.trim()));
+      const canShuffle = userImages.length > 0 && hasNonEmptyCaption;
+      $('shuffleBtn').disabled = !canShuffle;
+      $('exportAllBtn').disabled = !renderedSlides.length;
+    }
+
+    // Range value displays
+    $('textSize').addEventListener('input', e => { $('textSizeVal').textContent = e.target.value + 'px'; });
+    $('overlayOpacity').addEventListener('input', e => { $('overlayOpacityVal').textContent = e.target.value + '%'; });
+    $('textColor').addEventListener('input', e => { $('textColorVal').textContent = e.target.value; });
+
+    // Style changes auto-rerender
+    ['textPosition', 'textFont', 'textSize', 'textWeight', 'textColor', 'textShadow', 'textAlign', 'overlayOpacity', 'exportSize']
+      .forEach(id => $(id).addEventListener('change', () => {
+        if (renderedSlides.length) rerenderAll();
+      }));
+
+    // Toast
+    const toastEl = $('toast');
+    function showToast(msg, isError) {
+      toastEl.textContent = msg;
+      toastEl.classList.toggle('error', !!isError);
+      toastEl.classList.add('show');
+      clearTimeout(toastEl._t);
+      toastEl._t = setTimeout(() => toastEl.classList.remove('show'), 2500);
+    }
+  </script>
+</body>
+</html>

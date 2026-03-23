@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Caption Generator</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: #0a0a1a;
+      color: #e0e0f0;
+      min-height: 100vh;
+    }
+    .container { max-width: 800px; margin: 0 auto; padding: 2rem 1rem; }
+    h1 { font-size: 1.8rem; margin-bottom: 0.3rem; }
+    .subtitle { color: #8888aa; margin-bottom: 2rem; font-size: 0.95rem; }
+
+    .section {
+      background: #141428;
+      border: 1px solid #2a2a4a;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .section h2 {
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .badge {
+      background: #4f8cff;
+      color: white;
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+
+    .drop-zone {
+      border: 2px dashed #2a2a4a;
+      border-radius: 8px;
+      padding: 2.5rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: #4f8cff;
+      background: rgba(79, 140, 255, 0.05);
+    }
+    .drop-zone input { display: none; }
+    .drop-zone .icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
+    .drop-zone p { color: #8888aa; }
+    .drop-zone .hint { font-size: 0.8rem; margin-top: 0.5rem; }
+
+    .file-list { margin-top: 1rem; }
+    .file-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem 0.75rem;
+      background: #1a1a35;
+      border-radius: 6px;
+      margin-bottom: 0.5rem;
+      font-size: 0.9rem;
+    }
+    .file-item .remove {
+      background: none;
+      border: none;
+      color: #f44336;
+      cursor: pointer;
+      font-size: 1.2rem;
+      padding: 0 0.25rem;
+      line-height: 1;
+    }
+    .file-item .remove:hover { color: #ff6659; }
+
+    textarea {
+      width: 100%;
+      min-height: 140px;
+      background: #1a1a35;
+      border: 1px solid #2a2a4a;
+      border-radius: 8px;
+      color: #e0e0f0;
+      padding: 0.75rem;
+      font-family: inherit;
+      font-size: 0.95rem;
+      resize: vertical;
+      line-height: 1.5;
+    }
+    textarea:focus { outline: none; border-color: #4f8cff; }
+    textarea::placeholder { color: #555; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.5rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+    .btn-primary { background: #4f8cff; color: white; }
+    .btn-primary:hover { background: #6da3ff; }
+    .btn-primary:disabled { background: #2a2a4a; color: #555; cursor: not-allowed; }
+    .btn-success { background: #4caf50; color: white; }
+    .btn-success:hover { background: #66bb6a; }
+    .btn-danger { background: transparent; border: 1px solid #f44336; color: #f44336; }
+    .btn-danger:hover { background: rgba(244, 67, 54, 0.1); }
+
+    .action-bar {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .combo-count { color: #8888aa; font-size: 0.9rem; }
+
+    .progress-bar {
+      width: 100%;
+      height: 8px;
+      background: #1a1a35;
+      border-radius: 4px;
+      overflow: hidden;
+      margin: 1rem 0 0.5rem;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4f8cff, #6da3ff);
+      border-radius: 4px;
+      transition: width 0.3s;
+    }
+    .progress-text {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      color: #8888aa;
+    }
+
+    .output-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem 0.75rem;
+      background: #1a1a35;
+      border-radius: 6px;
+      margin-bottom: 0.4rem;
+      font-size: 0.85rem;
+    }
+    .output-item .meta { display: flex; align-items: center; gap: 0.75rem; }
+    .output-item .size { color: #8888aa; }
+    .output-item .dl-link {
+      color: #4f8cff;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.8rem;
+    }
+    .output-item .dl-link:hover { color: #6da3ff; text-decoration: underline; }
+
+    .hidden { display: none !important; }
+    .error-msg { color: #f44336; font-size: 0.9rem; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Video Caption Generator</h1>
+    <p class="subtitle">Upload videos, add captions, generate all combinations with styled text overlay</p>
+
+    <!-- Upload Section -->
+    <div class="section">
+      <h2>Videos <span class="badge" id="videoCount">0</span></h2>
+      <div class="drop-zone" id="dropZone">
+        <div class="icon">&#128193;</div>
+        <p>Drop video files here or click to browse</p>
+        <p class="hint">MP4, MOV, AVI, MKV, WEBM</p>
+        <input type="file" id="fileInput" accept="video/*" multiple>
+      </div>
+      <div class="file-list" id="fileList"></div>
+    </div>
+
+    <!-- Captions Section -->
+    <div class="section">
+      <h2>Captions <span class="badge" id="captionCount">0</span></h2>
+      <textarea id="captions" placeholder="Enter captions, one per line&#10;&#10;Example:&#10;This is amazing!&#10;Check this out&#10;Best moment ever"></textarea>
+    </div>
+
+    <!-- Generate Section -->
+    <div class="section">
+      <div class="action-bar">
+        <button class="btn btn-primary" id="generateBtn" disabled>Generate All Combinations</button>
+        <span class="combo-count" id="comboCount"></span>
+      </div>
+    </div>
+
+    <!-- Progress Section -->
+    <div class="section hidden" id="progressSection">
+      <h2>Processing</h2>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+      </div>
+      <div class="progress-text">
+        <span id="progressCurrent">Starting...</span>
+        <span id="progressPercent">0%</span>
+      </div>
+    </div>
+
+    <!-- Results Section -->
+    <div class="section hidden" id="resultsSection">
+      <h2>Results</h2>
+      <div class="action-bar" style="margin-bottom: 1rem;">
+        <button class="btn btn-success" id="downloadBtn">Download All (ZIP)</button>
+        <button class="btn btn-danger" id="resetBtn">Reset &amp; Start Over</button>
+      </div>
+      <p style="color: #8888aa; font-size: 0.8rem; margin-bottom: 0.75rem;">Or download individually:</p>
+      <div id="outputList"></div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let uploadedFiles = [];
+    let polling = null;
+
+    // Elements
+    const $ = (id) => document.getElementById(id);
+    const dropZone = $('dropZone');
+    const fileInput = $('fileInput');
+    const fileList = $('fileList');
+    const captions = $('captions');
+    const generateBtn = $('generateBtn');
+    const comboCount = $('comboCount');
+    const videoCount = $('videoCount');
+    const captionCount = $('captionCount');
+    const progressSection = $('progressSection');
+    const progressFill = $('progressFill');
+    const progressCurrent = $('progressCurrent');
+    const progressPercent = $('progressPercent');
+    const resultsSection = $('resultsSection');
+    const downloadBtn = $('downloadBtn');
+    const resetBtn = $('resetBtn');
+    const outputList = $('outputList');
+
+    // --- Drag & Drop ---
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('dragover');
+    });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      uploadFiles(e.dataTransfer.files);
+    });
+    fileInput.addEventListener('change', () => {
+      uploadFiles(fileInput.files);
+      fileInput.value = '';
+    });
+
+    async function uploadFiles(files) {
+      const form = new FormData();
+      for (const f of files) form.append('videos', f);
+
+      dropZone.style.opacity = '0.5';
+      dropZone.style.pointerEvents = 'none';
+
+      try {
+        const res = await fetch('/api/upload', { method: 'POST', body: form });
+        const data = await res.json();
+        uploadedFiles.push(...data.uploaded);
+        updateUI();
+      } catch (err) {
+        alert('Upload failed: ' + err.message);
+      } finally {
+        dropZone.style.opacity = '';
+        dropZone.style.pointerEvents = '';
+      }
+    }
+
+    // --- Captions ---
+    captions.addEventListener('input', updateUI);
+
+    function getCaptions() {
+      return captions.value.split('\n').map((l) => l.trim()).filter(Boolean);
+    }
+
+    // --- UI Update ---
+    function updateUI() {
+      const caps = getCaptions();
+      const vCount = uploadedFiles.length;
+      const cCount = caps.length;
+
+      videoCount.textContent = vCount;
+      captionCount.textContent = cCount;
+
+      fileList.innerHTML = uploadedFiles
+        .map(
+          (f, i) => `
+        <div class="file-item">
+          <span>${f}</span>
+          <button class="remove" onclick="removeFile(${i})">&times;</button>
+        </div>`
+        )
+        .join('');
+
+      if (vCount && cCount) {
+        const total = vCount * cCount;
+        comboCount.textContent = `${vCount} video${vCount > 1 ? 's' : ''} \u00d7 ${cCount} caption${cCount > 1 ? 's' : ''} = ${total} output${total > 1 ? 's' : ''}`;
+        generateBtn.disabled = false;
+      } else {
+        comboCount.textContent = '';
+        generateBtn.disabled = true;
+      }
+    }
+
+    async function removeFile(index) {
+      const name = uploadedFiles[index];
+      try {
+        await fetch(`/api/video/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      } catch (e) {}
+      uploadedFiles.splice(index, 1);
+      updateUI();
+    }
+
+    // --- Generate ---
+    generateBtn.addEventListener('click', async () => {
+      // Verify server-side state matches before processing
+      const vRes = await fetch('/api/videos');
+      const vData = await vRes.json();
+      if (!vData.files.length) {
+        uploadedFiles = [];
+        updateUI();
+        alert('No videos on server. Please re-upload your files.');
+        return;
+      }
+      uploadedFiles = vData.files;
+      updateUI();
+
+      const caps = getCaptions();
+      generateBtn.disabled = true;
+      progressSection.classList.remove('hidden');
+      resultsSection.classList.add('hidden');
+      progressFill.style.width = '0%';
+      progressPercent.textContent = '0%';
+      progressCurrent.textContent = 'Starting...';
+
+      try {
+        const res = await fetch('/api/process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ captions: caps }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert(err.error || 'Processing failed');
+          generateBtn.disabled = false;
+          return;
+        }
+
+        polling = setInterval(pollProgress, 1000);
+      } catch (err) {
+        alert('Error: ' + err.message);
+        generateBtn.disabled = false;
+      }
+    });
+
+    async function pollProgress() {
+      try {
+        const res = await fetch('/api/progress');
+        const data = await res.json();
+
+        const pct = data.total ? Math.round((data.completed / data.total) * 100) : 0;
+        progressFill.style.width = pct + '%';
+        progressPercent.textContent = `${data.completed}/${data.total} (${pct}%)`;
+        progressCurrent.textContent = data.current || 'Processing...';
+
+        if (data.status === 'done' || data.status === 'error') {
+          clearInterval(polling);
+          polling = null;
+
+          if (data.status === 'done') {
+            progressCurrent.textContent = 'Complete!';
+            progressFill.style.width = '100%';
+            await showResults();
+          } else {
+            progressCurrent.textContent = 'Error: ' + data.error;
+          }
+          generateBtn.disabled = false;
+        }
+      } catch (e) {}
+    }
+
+    async function showResults() {
+      const res = await fetch('/api/outputs');
+      const data = await res.json();
+
+      resultsSection.classList.remove('hidden');
+      outputList.innerHTML = data.files
+        .map(
+          (f) => `
+        <div class="output-item">
+          <span>${f.name}</span>
+          <div class="meta">
+            <span class="size">${f.size}</span>
+            <a class="dl-link" href="/api/download/${encodeURIComponent(f.name)}" download="${f.name}">Download</a>
+          </div>
+        </div>`
+        )
+        .join('');
+    }
+
+    // --- Download ---
+    downloadBtn.addEventListener('click', () => {
+      window.location.href = '/api/download';
+    });
+
+    // --- Reset ---
+    resetBtn.addEventListener('click', async () => {
+      if (!confirm('Delete all uploaded videos and outputs?')) return;
+      await fetch('/api/reset', { method: 'POST' });
+      uploadedFiles = [];
+      captions.value = '';
+      progressSection.classList.add('hidden');
+      resultsSection.classList.add('hidden');
+      progressFill.style.width = '0%';
+      updateUI();
+    });
+
+    // --- Init: load existing uploads ---
+    fetch('/api/videos')
+      .then((r) => r.json())
+      .then((data) => {
+        uploadedFiles = data.files;
+        updateUI();
+      });
+  </script>
+</body>
+</html>

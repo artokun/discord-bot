@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+*.log
+/tmp/
+_reference/
+tiktok-cookies.json
+tiktok-cache/
+uploads/
+output/

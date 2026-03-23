@@ -1,0 +1,19 @@
+{
+  "name": "discord-claude-bot",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "register": "bun run src/commands/register.ts"
+  },
+  "dependencies": {
+    "discord.js": "^14.18.0",
+    "puppeteer-core": "^24.40.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.0"
+  }
+}
