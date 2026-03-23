@@ -512,21 +512,17 @@ export async function scrapeTikTokPost(
 export async function scrapeTikTokProfile(
   profileUrl: string
 ): Promise<{ sets: TikTokCaptionSet[] }> {
-  console.log(`[scrape] Profile: ${profileUrl}`);
-  const entries = await galleryDlJson(profileUrl);
+  // gallery-dl returns redirects for bare profile URLs — need /posts suffix
+  let postsUrl = profileUrl.replace(/\/$/, "");
+  if (!postsUrl.endsWith("/posts")) postsUrl += "/posts";
+  console.log(`[scrape] Profile: ${postsUrl}`);
+  const entries = await galleryDlJson(postsUrl);
   const sets = parseGalleryDlEntries(entries, profileUrl);
   const slideshowSets = sets.filter(s => s.slides.length > 1);
-
-  for (const set of slideshowSets) {
-    console.log(`[ocr] Running OCR on ${set.slides.length} slides...`);
-    await ocrSlides(set.slides);
-  }
-
-  await cleanupCaptionsWithLlm(slideshowSets);
-
   const total = slideshowSets.reduce((n, s) => n + s.slides.length, 0);
-  const withText = slideshowSets.reduce((n, s) => n + s.slides.filter(sl => sl.text).length, 0);
-  console.log(`[scrape] Done: ${slideshowSets.length} slideshows, ${total} slides, ${withText} with text`);
+
+  // Profile scrapes skip OCR — too many slides. OCR runs on individual post scrapes.
+  console.log(`[scrape] Done: ${slideshowSets.length} slideshows, ${total} slides (OCR skipped for profile)`);
   return { sets: slideshowSets };
 }
 
