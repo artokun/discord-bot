@@ -134,10 +134,18 @@ const OCR_STRATEGIES: OcrStrategy[] = [
   { name: "gray-thresh", filter: `${SCALE}format=gray,negate,eq=contrast=3` },
 ];
 
-async function runTesseract(imagePath: string, cwd: string): Promise<string> {
+interface OcrResult {
+  text: string;
+  /** Text vertical position as percentage (0=top, 100=bottom) */
+  yPercent: number;
+  /** Text horizontal alignment: "left" | "center" | "right" */
+  textAlign: "left" | "center" | "right";
+}
+
+async function runTesseractTsv(imagePath: string, cwd: string): Promise<string> {
   const fileName = imagePath.split("/").pop()!;
   const tess = Bun.spawn(
-    ["tesseract", fileName, "stdout", "--psm", "3"],
+    ["tesseract", fileName, "stdout", "--psm", "3", "tsv"],
     { stdout: "pipe", stderr: "pipe", cwd }
   );
   const raw = await new Response(tess.stdout).text();
@@ -145,26 +153,105 @@ async function runTesseract(imagePath: string, cwd: string): Promise<string> {
   return raw;
 }
 
-function cleanOcrText(raw: string): string {
-  const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
-  const clean = lines.filter(l => {
-    const alphaCount = (l.match(/[a-zA-Z]/g) || []).length;
-    return alphaCount >= 2 && l.length > 2;
-  });
-  return clean.map(l => l.replace(/^[^a-zA-Z"'(]+/, "").trim()).filter(Boolean).join("\n");
+function parseTsvOutput(tsv: string, imgWidth: number, imgHeight: number): OcrResult {
+  const lines = tsv.trim().split("\n");
+  if (lines.length < 2) return { text: "", yPercent: 70, textAlign: "center" };
+
+  // Extract words with positions
+  const words: { text: string; left: number; top: number; w: number; h: number; lineNum: string }[] = [];
+  for (const line of lines.slice(1)) {
+    const parts = line.split("\t");
+    if (parts.length < 12) continue;
+    const level = parseInt(parts[0]);
+    const text = parts[11]?.trim();
+    if (level !== 5 || !text) continue;
+    const alphaCount = (text.match(/[a-zA-Z]/g) || []).length;
+    if (alphaCount < 1) continue;
+    words.push({
+      text,
+      left: parseInt(parts[6]),
+      top: parseInt(parts[7]),
+      w: parseInt(parts[8]),
+      h: parseInt(parts[9]),
+      lineNum: parts[4],
+    });
+  }
+
+  if (words.length === 0) return { text: "", yPercent: 70, textAlign: "center" };
+
+  // Group words into text lines
+  const lineGroups = new Map<string, typeof words>();
+  for (const w of words) {
+    const group = lineGroups.get(w.lineNum) || [];
+    group.push(w);
+    lineGroups.set(w.lineNum, group);
+  }
+
+  const textLines: string[] = [];
+  let allLeft: number[] = [];
+  let allRight: number[] = [];
+  let minTop = Infinity;
+  let maxBottom = 0;
+
+  for (const group of lineGroups.values()) {
+    const lineText = group.map(w => w.text).join(" ");
+    // Filter noise lines
+    const alphaCount = (lineText.match(/[a-zA-Z]/g) || []).length;
+    if (alphaCount < 2 || lineText.length < 3) continue;
+    const cleaned = lineText.replace(/^[^a-zA-Z"'(]+/, "").trim();
+    if (!cleaned) continue;
+
+    textLines.push(cleaned);
+    const x1 = Math.min(...group.map(w => w.left));
+    const x2 = Math.max(...group.map(w => w.left + w.w));
+    const y1 = Math.min(...group.map(w => w.top));
+    const y2 = Math.max(...group.map(w => w.top + w.h));
+    allLeft.push(x1);
+    allRight.push(x2);
+    minTop = Math.min(minTop, y1);
+    maxBottom = Math.max(maxBottom, y2);
+  }
+
+  if (textLines.length === 0) return { text: "", yPercent: 70, textAlign: "center" };
+
+  // Calculate vertical position (center of text block)
+  const textCenterY = (minTop + maxBottom) / 2;
+  const yPercent = Math.round((textCenterY / imgHeight) * 100);
+
+  // Calculate horizontal alignment
+  const avgLeft = allLeft.reduce((a, b) => a + b, 0) / allLeft.length;
+  const avgRight = allRight.reduce((a, b) => a + b, 0) / allRight.length;
+  const textCenterX = (avgLeft + avgRight) / 2;
+  const xPercent = textCenterX / imgWidth;
+
+  let textAlign: "left" | "center" | "right";
+  if (xPercent < 0.38) textAlign = "left";
+  else if (xPercent > 0.62) textAlign = "right";
+  else textAlign = "center";
+
+  return {
+    text: textLines.join("\n"),
+    yPercent,
+    textAlign,
+  };
 }
 
 /**
  * Multi-pass OCR: tries multiple preprocessing strategies and picks the best result.
+ * Returns text + position data (vertical %, horizontal alignment).
  */
-async function ocrImage(imagePath: string): Promise<string> {
+async function ocrImage(imagePath: string): Promise<OcrResult> {
   const tmpDir = join(CACHE_DIR, "ocr-tmp");
   mkdirSync(tmpDir, { recursive: true });
   const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const preprocessedFiles: string[] = [];
+  // Scaled image dimensions (SCALE = 800px wide, height proportional)
+  const SCALED_W = 800;
+  // Approximate TikTok aspect ratio 9:16
+  const SCALED_H = Math.round(SCALED_W * (16 / 9));
 
   try {
-    let bestText = "";
+    let best: OcrResult = { text: "", yPercent: 70, textAlign: "center" };
 
     for (const strategy of OCR_STRATEGIES) {
       const outFile = join(tmpDir, `${id}_${strategy.name}.png`);
@@ -176,18 +263,17 @@ async function ocrImage(imagePath: string): Promise<string> {
       );
       await ffmpeg.exited;
 
-      const raw = await runTesseract(outFile, tmpDir);
-      const text = cleanOcrText(raw);
+      const tsv = await runTesseractTsv(outFile, tmpDir);
+      const result = parseTsvOutput(tsv, SCALED_W, SCALED_H);
 
-      if (text.length > bestText.length) {
-        bestText = text;
+      if (result.text.length > best.text.length) {
+        best = result;
       }
 
-      // If we got a decent result, stop early
-      if (bestText.length > 10) break;
+      if (best.text.length > 10) break;
     }
 
-    return bestText;
+    return best;
   } finally {
     for (const f of preprocessedFiles) {
       try { unlinkSync(f); } catch {}
@@ -215,10 +301,25 @@ async function ocrSlides(slides: TikTokSlide[]): Promise<void> {
         continue;
       }
 
-      const text = await ocrImage(imgPath);
-      if (text) {
-        slide.text = text;
-        console.log(`  [ocr] Slide ${i + 1}: "${text.substring(0, 60)}"`);
+      const result = await ocrImage(imgPath);
+      if (result.text) {
+        slide.text = result.text;
+        // Map yPercent to position zone
+        let position: "top" | "center" | "bottom";
+        if (result.yPercent < 33) position = "top";
+        else if (result.yPercent < 66) position = "center";
+        else position = "bottom";
+
+        slide.style = {
+          position,
+          fontSize: 32,
+          textAlign: result.textAlign,
+          fontWeight: "600",
+          textColor: "#ffffff",
+          textShadow: "medium",
+          overlayOpacity: 0.4,
+        };
+        console.log(`  [ocr] Slide ${i + 1}: "${result.text.substring(0, 50)}" (${position}, ${result.textAlign}, y=${result.yPercent}%)`);
       } else {
         console.log(`  [ocr] Slide ${i + 1}: (no text detected)`);
       }
