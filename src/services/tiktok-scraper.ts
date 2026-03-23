@@ -118,326 +118,134 @@ async function downloadImage(url: string, destPath: string): Promise<boolean> {
   }
 }
 
-// --- Multi-pass OCR ---
+// --- Vision-based text extraction (Claude) ---
 
-interface OcrStrategy {
-  name: string;
-  /** ffmpeg -vf filter string */
-  filter: string;
-}
-
-// Scale down to 800px wide first to reduce memory, then preprocess
-const SCALE = "scale=800:-1,";
-
-const OCR_STRATEGIES: OcrStrategy[] = [
-  // Pass 1: white text — negate + aggressive binarize
-  { name: "white-text", filter: `${SCALE}negate,curves=all='0/0 0.3/1 1/1'` },
-  // Pass 2: colored/dark text — high contrast without negate
-  { name: "color-text", filter: `${SCALE}eq=contrast=3:brightness=-0.3` },
-  // Pass 3: colored text — grayscale + strong threshold
-  { name: "gray-thresh", filter: `${SCALE}format=gray,negate,eq=contrast=3` },
-];
-
-interface OcrResult {
+interface ExtractedSlideData {
   text: string;
-  /** Text block center Y as percentage of image height (0-100) */
   yPercent: number;
-  /** Text block center X as percentage of image width (0-100) */
   xPercent: number;
-  /** Text horizontal alignment: "left" | "center" | "right" */
   textAlign: "left" | "center" | "right";
-  /** Estimated font size, calibrated to 400px reference width (for the frontend scaler) */
   fontSize: number;
-}
-
-async function runTesseractTsv(imagePath: string, cwd: string): Promise<string> {
-  const fileName = imagePath.split("/").pop()!;
-  const tess = Bun.spawn(
-    ["tesseract", fileName, "stdout", "--psm", "3", "tsv"],
-    { stdout: "pipe", stderr: "pipe", cwd }
-  );
-  const raw = await new Response(tess.stdout).text();
-  await tess.exited;
-  return raw;
-}
-
-function parseTsvOutput(tsv: string, imgWidth: number, imgHeight: number): OcrResult {
-  const lines = tsv.trim().split("\n");
-  if (lines.length < 2) return { text: "", yPercent: 70, textAlign: "center" };
-
-  // Extract words with positions
-  const words: { text: string; left: number; top: number; w: number; h: number; lineNum: string }[] = [];
-  for (const line of lines.slice(1)) {
-    const parts = line.split("\t");
-    if (parts.length < 12) continue;
-    const level = parseInt(parts[0]);
-    const text = parts[11]?.trim();
-    if (level !== 5 || !text) continue;
-    const alphaCount = (text.match(/[a-zA-Z]/g) || []).length;
-    if (alphaCount < 1) continue;
-    words.push({
-      text,
-      left: parseInt(parts[6]),
-      top: parseInt(parts[7]),
-      w: parseInt(parts[8]),
-      h: parseInt(parts[9]),
-      lineNum: parts[4],
-    });
-  }
-
-  if (words.length === 0) return { text: "", yPercent: 70, textAlign: "center" };
-
-  // Group words into text lines
-  const lineGroups = new Map<string, typeof words>();
-  for (const w of words) {
-    const group = lineGroups.get(w.lineNum) || [];
-    group.push(w);
-    lineGroups.set(w.lineNum, group);
-  }
-
-  const textLines: string[] = [];
-  let allLeft: number[] = [];
-  let allRight: number[] = [];
-  let allWordHeights: number[] = [];
-  let minTop = Infinity;
-  let maxBottom = 0;
-
-  for (const group of lineGroups.values()) {
-    const lineText = group.map(w => w.text).join(" ");
-    // Filter noise lines
-    const alphaCount = (lineText.match(/[a-zA-Z]/g) || []).length;
-    if (alphaCount < 2 || lineText.length < 3) continue;
-    const cleaned = lineText.replace(/^[^a-zA-Z"'(]+/, "").trim();
-    if (!cleaned) continue;
-
-    textLines.push(cleaned);
-    const x1 = Math.min(...group.map(w => w.left));
-    const x2 = Math.max(...group.map(w => w.left + w.w));
-    const y1 = Math.min(...group.map(w => w.top));
-    const y2 = Math.max(...group.map(w => w.top + w.h));
-    allLeft.push(x1);
-    allRight.push(x2);
-    minTop = Math.min(minTop, y1);
-    maxBottom = Math.max(maxBottom, y2);
-    // Collect word heights for font size estimation (skip very small words like "i")
-    for (const w of group) {
-      if (w.h > 10 && w.text.length > 1) allWordHeights.push(w.h);
-    }
-  }
-
-  if (textLines.length === 0) return { text: "", yPercent: 70, xPercent: 50, textAlign: "center", fontSize: 32 };
-
-  // Calculate vertical position (top of text block — more reliable than center
-  // since center shifts when LLM cleans up text length)
-  const yPercent = Math.round((minTop / imgHeight) * 100);
-
-  // Calculate horizontal alignment and anchor point
-  const avgLeft = allLeft.reduce((a, b) => a + b, 0) / allLeft.length;
-  const avgRight = allRight.reduce((a, b) => a + b, 0) / allRight.length;
-  const textCenterX = (avgLeft + avgRight) / 2;
-  const centerRatio = textCenterX / imgWidth;
-
-  let textAlign: "left" | "center" | "right";
-  let xPercent: number;
-  if (centerRatio < 0.38) {
-    textAlign = "left";
-    // xPercent = left edge of text block
-    xPercent = Math.round((avgLeft / imgWidth) * 100);
-  } else if (centerRatio > 0.62) {
-    textAlign = "right";
-    // xPercent = right edge of text block
-    xPercent = Math.round((avgRight / imgWidth) * 100);
-  } else {
-    textAlign = "center";
-    // xPercent = center of text block
-    xPercent = Math.round(centerRatio * 100);
-  }
-
-  // Estimate font size from word heights
-  // Word height ≈ cap height. Font size ≈ word height * 1.15 (ascender ratio)
-  // Frontend scales: scaledFontSize = fontSize * (canvasWidth / 400)
-  // OCR was done at SCALED_W (800px), so: fontSize = wordHeight * 1.15 * (400 / 800)
-  const REFERENCE_WIDTH = 400; // frontend reference width
-  let fontSize = 32; // default
-  if (allWordHeights.length > 0) {
-    allWordHeights.sort((a, b) => a - b);
-    const medianHeight = allWordHeights[Math.floor(allWordHeights.length / 2)];
-    fontSize = Math.round(medianHeight * 1.15 * (REFERENCE_WIDTH / imgWidth));
-  }
-
-  return {
-    text: textLines.join("\n"),
-    yPercent,
-    xPercent,
-    textAlign,
-    fontSize,
-  };
+  fontWeight: string;
+  textColor: string;
 }
 
 /**
- * Multi-pass OCR: tries multiple preprocessing strategies and picks the best result.
- * Returns text + position data (vertical %, horizontal alignment).
+ * Use Claude vision to extract text with exact formatting from a slide image.
+ * Returns text with original line breaks, position, font size, alignment, and color.
  */
-async function ocrImage(imagePath: string): Promise<OcrResult> {
-  const tmpDir = join(CACHE_DIR, "ocr-tmp");
-  mkdirSync(tmpDir, { recursive: true });
-  const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const preprocessedFiles: string[] = [];
-  // Scaled image dimensions (SCALE = 800px wide, height proportional)
-  const SCALED_W = 800;
-  // Approximate TikTok aspect ratio 9:16
-  const SCALED_H = Math.round(SCALED_W * (16 / 9));
+async function extractTextWithVision(imageBase64: string, mimeType: string): Promise<ExtractedSlideData | null> {
+  if (!process.env.ANTHROPIC_API_KEY) return null;
 
+  const client = new Anthropic();
   try {
-    let best: OcrResult = { text: "", yPercent: 70, textAlign: "center" };
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 512,
+      messages: [{
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: { type: "base64", media_type: mimeType as "image/jpeg", data: imageBase64 },
+          },
+          {
+            type: "text",
+            text: `Extract the overlay text from this TikTok slide image. Return ONLY a JSON object with these fields:
+- "text": the exact text with line breaks preserved as \\n (include ALL text, headers and body)
+- "yPercent": vertical position of the TOP of the text as a percentage of image height (0=top, 100=bottom)
+- "xPercent": horizontal anchor position as percentage of image width
+- "textAlign": "left", "center", or "right"
+- "fontSize": estimated font size in pixels relative to a 400px wide image
+- "fontWeight": "400" for regular, "600" for semi-bold, "700" for bold
+- "textColor": hex color of the text (e.g. "#ffffff", "#ff2d55")
 
-    for (const strategy of OCR_STRATEGIES) {
-      const outFile = join(tmpDir, `${id}_${strategy.name}.png`);
-      preprocessedFiles.push(outFile);
+Return ONLY valid JSON, no markdown or explanation.`
+          }
+        ],
+      }],
+    });
 
-      const ffmpeg = Bun.spawn(
-        ["ffmpeg", "-y", "-i", imagePath, "-vf", strategy.filter, outFile],
-        { stdout: "pipe", stderr: "pipe" }
-      );
-      await ffmpeg.exited;
+    const raw = (response.content[0] as { type: string; text: string }).text.trim();
+    // Parse JSON, handling potential markdown wrapping
+    const jsonStr = raw.replace(/^```json?\n?/, "").replace(/\n?```$/, "").trim();
+    const parsed = JSON.parse(jsonStr);
 
-      const tsv = await runTesseractTsv(outFile, tmpDir);
-      const result = parseTsvOutput(tsv, SCALED_W, SCALED_H);
-
-      if (result.text.length > best.text.length) {
-        best = result;
-      }
-
-      if (best.text.length > 10) break;
-    }
-
-    return best;
-  } finally {
-    for (const f of preprocessedFiles) {
-      try { unlinkSync(f); } catch {}
-    }
+    return {
+      text: parsed.text || "",
+      yPercent: parsed.yPercent ?? 60,
+      xPercent: parsed.xPercent ?? 50,
+      textAlign: parsed.textAlign || "center",
+      fontSize: parsed.fontSize ?? 14,
+      fontWeight: parsed.fontWeight || "600",
+      textColor: parsed.textColor || "#ffffff",
+    };
+  } catch (err) {
+    console.error(`  [vision] Error: ${(err as Error).message}`);
+    return null;
   }
 }
 
 /**
- * Download + OCR all slides in a set.
- * Processes one at a time to keep memory low on small containers.
+ * Extract text + formatting from all slides using Claude vision.
+ * Downloads each image, sends to Claude Haiku for exact text extraction.
  */
-async function ocrSlides(slides: TikTokSlide[]): Promise<void> {
-  const tmpDir = join(CACHE_DIR, "dl-tmp");
-  mkdirSync(tmpDir, { recursive: true });
+async function extractSlideText(slides: TikTokSlide[]): Promise<void> {
+  const useVision = !!process.env.ANTHROPIC_API_KEY;
 
   for (let i = 0; i < slides.length; i++) {
     const slide = slides[i];
     if (!slide.originalImageUrl) continue;
 
-    const imgPath = join(tmpDir, `slide_${i}.jpg`);
     try {
-      const ok = await downloadImage(slide.originalImageUrl, imgPath);
-      if (!ok) {
-        console.log(`  [ocr] Failed to download slide ${i + 1}`);
+      // Download image to memory
+      const res = await fetch(slide.originalImageUrl, {
+        headers: { Referer: "https://www.tiktok.com/" },
+      });
+      if (!res.ok) {
+        console.log(`  [extract] Slide ${i + 1}: download failed`);
         continue;
       }
 
-      const result = await ocrImage(imgPath);
-      if (result.text) {
-        slide.text = result.text;
-        // Map yPercent to position zone
-        let position: "top" | "center" | "bottom";
-        if (result.yPercent < 33) position = "top";
-        else if (result.yPercent < 66) position = "center";
-        else position = "bottom";
+      const buf = Buffer.from(await res.arrayBuffer());
+      const base64 = buf.toString("base64");
+      const mimeType = res.headers.get("content-type") || "image/jpeg";
 
-        slide.style = {
-          position,
-          fontSize: result.fontSize,
-          textAlign: result.textAlign,
-          fontWeight: "600",
-          textColor: "#ffffff",
-          textShadow: "medium",
-          overlayOpacity: 0.4,
-          yPercent: result.yPercent,
-          xPercent: result.xPercent,
-        };
-        console.log(`  [ocr] Slide ${i + 1}: "${result.text.substring(0, 50)}" (x=${result.xPercent}%, y=${result.yPercent}%)`);
-      } else {
-        console.log(`  [ocr] Slide ${i + 1}: (no text detected)`);
+      if (useVision) {
+        const result = await extractTextWithVision(base64, mimeType);
+        if (result && result.text) {
+          slide.text = result.text;
+
+          let position: "top" | "center" | "bottom";
+          if (result.yPercent < 33) position = "top";
+          else if (result.yPercent < 66) position = "center";
+          else position = "bottom";
+
+          slide.style = {
+            position,
+            fontSize: result.fontSize,
+            textAlign: result.textAlign,
+            fontWeight: result.fontWeight,
+            textColor: result.textColor,
+            textShadow: "medium",
+            overlayOpacity: 0.4,
+            yPercent: result.yPercent,
+            xPercent: result.xPercent,
+          };
+          console.log(`  [vision] Slide ${i + 1}: "${result.text.substring(0, 50).replace(/\n/g, '↵')}" (${result.textColor}, ${result.fontWeight}, y=${result.yPercent}%)`);
+          continue;
+        }
       }
-    } finally {
-      try { unlinkSync(imgPath); } catch {}
+
+      // No vision available or it failed — slide gets no text
+      console.log(`  [extract] Slide ${i + 1}: ${useVision ? 'vision failed' : 'no API key'} — skipped`);
+    } catch (err) {
+      console.log(`  [extract] Slide ${i + 1}: error — ${(err as Error).message}`);
     }
   }
 }
 
 // --- LLM cleanup ---
-
-/**
- * Use Claude Haiku to clean up OCR artifacts and make captions grammatically correct.
- * Falls back to raw OCR text if no API key or on error.
- */
-async function cleanupCaptionsWithLlm(sets: TikTokCaptionSet[]): Promise<void> {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.log("[llm] No ANTHROPIC_API_KEY set, skipping LLM cleanup");
-    return;
-  }
-
-  const client = new Anthropic();
-
-  // Build a batch request: all slides that have OCR text
-  const slideEntries: { setIdx: number; slideIdx: number; raw: string }[] = [];
-  for (let si = 0; si < sets.length; si++) {
-    for (let sli = 0; sli < sets[si].slides.length; sli++) {
-      const text = sets[si].slides[sli].text;
-      if (text) {
-        slideEntries.push({ setIdx: si, slideIdx: sli, raw: text });
-      }
-    }
-  }
-
-  if (slideEntries.length === 0) return;
-
-  const numbered = slideEntries.map((e, i) => `${i + 1}. ${e.raw}`).join("\n");
-
-  try {
-    console.log(`[llm] Cleaning ${slideEntries.length} captions...`);
-    const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      messages: [{
-        role: "user",
-        content: `These are captions extracted via OCR from TikTok slideshow images. They have OCR artifacts like:
-- Missing spaces between words
-- Random noise characters at the start
-- Pipe "|" instead of "I"
-- Truncated endings
-- Wrong line breaks
-
-Clean each caption: fix spelling, grammar, spacing, and punctuation. Keep the original meaning and casual tone (don't make them formal). Each caption should be a single line.
-
-Return ONLY a numbered list matching the input numbers, one cleaned caption per line. No explanations.
-
-${numbered}`
-      }],
-    });
-
-    const output = (response.content[0] as { type: string; text: string }).text;
-    const lines = output.split("\n").filter(l => /^\d+\./.test(l.trim()));
-
-    for (const line of lines) {
-      const match = line.match(/^(\d+)\.\s*(.+)/);
-      if (!match) continue;
-      const idx = parseInt(match[1]) - 1;
-      const cleaned = match[2].trim();
-      if (idx >= 0 && idx < slideEntries.length && cleaned) {
-        const entry = slideEntries[idx];
-        sets[entry.setIdx].slides[entry.slideIdx].text = cleaned;
-      }
-    }
-    console.log(`[llm] Cleaned ${lines.length} captions`);
-  } catch (err) {
-    console.error(`[llm] Cleanup failed, keeping raw OCR:`, (err as Error).message);
-  }
-}
 
 // --- Parse gallery-dl output ---
 
@@ -507,11 +315,9 @@ export async function scrapeTikTokPost(
   const sets = parseGalleryDlEntries(entries, postUrl);
 
   for (const set of sets) {
-    console.log(`[ocr] Running OCR on ${set.slides.length} slides...`);
-    await ocrSlides(set.slides);
+    console.log(`[extract] Reading text from ${set.slides.length} slides...`);
+    await extractSlideText(set.slides);
   }
-
-  await cleanupCaptionsWithLlm(sets);
 
   const total = sets.reduce((n, s) => n + s.slides.length, 0);
   const withText = sets.reduce((n, s) => n + s.slides.filter(sl => sl.text).length, 0);

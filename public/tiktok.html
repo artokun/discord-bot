@@ -715,7 +715,7 @@
             source: url,
             title: set.title || set.description || '',
             slides: (set.slides || []).map(slide => ({
-              text: (slide.text || '').replace(/\n/g, ' '),
+              text: slide.text || '',
               style: slide.style || (slide.position ? {
                 position: slide.position || 'bottom',
                 fontSize: parseFontSize(slide.fontSize),
@@ -1339,9 +1339,16 @@
         ctx.shadowBlur = 0;
       }
 
-      // Word wrap
+      // Split on explicit line breaks first, then word-wrap each line
       const maxWidth = w - padding * 2;
-      const lines = wrapText(ctx, caption, maxWidth);
+      const lines = [];
+      for (const paragraph of caption.split('\n')) {
+        if (paragraph.trim() === '') {
+          lines.push(''); // preserve blank lines
+        } else {
+          lines.push(...wrapText(ctx, paragraph, maxWidth));
+        }
+      }
 
       // Compute text Y position
       const totalTextHeight = lines.length * lineHeight;

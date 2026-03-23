@@ -1,11 +1,10 @@
 FROM oven/bun:1 AS base
 
-# Install Python + gallery-dl + tesseract for TikTok scraping + OCR
+# Install Python + gallery-dl for TikTok scraping, ffmpeg for video processing
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     ffmpeg \
-    tesseract-ocr \
     zip \
     --no-install-recommends \
     && pip3 install --break-system-packages gallery-dl \
