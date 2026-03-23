@@ -211,13 +211,28 @@ async function scrapePostPage(
     console.log(`  Navigation aborted, waiting for render...`);
   }
 
-  // Wait for the swiper/carousel to render
-  await page.waitForSelector('.swiper-slide img, img[class*="ImgPhotoSlide"], img[class*="ImgPhoto"]', {
-    timeout: 15000,
+  // Wait for the swiper/carousel to render — retry until we get multiple slides
+  await page.waitForSelector('.swiper-slide img, img[class*="ImgPhoto"]', {
+    timeout: 20000,
   }).catch(() => null);
 
-  // Extra wait for all slides to load into the swiper DOM
-  await new Promise((r) => setTimeout(r, 3000));
+  // Poll until swiper has loaded all slides (not just 1)
+  // On slow containers, the swiper takes time to initialize all slides
+  for (let attempt = 0; attempt < 8; attempt++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const slideCount = await page.evaluate(() => {
+      return document.querySelectorAll(
+        '.swiper-slide:not(.swiper-slide-duplicate) img[class*="ImgPhoto"]'
+      ).length;
+    }).catch(() => 0);
+    if (slideCount > 1) {
+      console.log(`  Swiper loaded ${slideCount} slides after ${(attempt + 1) * 2}s`);
+      break;
+    }
+    if (attempt === 7) {
+      console.log(`  Swiper still has ${slideCount} slide(s) after 16s, proceeding anyway`);
+    }
+  }
 
   // Extract slide images and description from rendered DOM
   const result = await page.evaluate(() => {
