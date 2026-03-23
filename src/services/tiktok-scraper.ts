@@ -231,17 +231,27 @@ function parseTsvOutput(tsv: string, imgWidth: number, imgHeight: number): OcrRe
   const textCenterY = (minTop + maxBottom) / 2;
   const yPercent = Math.round((textCenterY / imgHeight) * 100);
 
-  // Calculate horizontal alignment
+  // Calculate horizontal alignment and anchor point
   const avgLeft = allLeft.reduce((a, b) => a + b, 0) / allLeft.length;
   const avgRight = allRight.reduce((a, b) => a + b, 0) / allRight.length;
   const textCenterX = (avgLeft + avgRight) / 2;
-  const xPercentRaw = textCenterX / imgWidth;
-  const xPercent = Math.round(xPercentRaw * 100);
+  const centerRatio = textCenterX / imgWidth;
 
   let textAlign: "left" | "center" | "right";
-  if (xPercentRaw < 0.38) textAlign = "left";
-  else if (xPercentRaw > 0.62) textAlign = "right";
-  else textAlign = "center";
+  let xPercent: number;
+  if (centerRatio < 0.38) {
+    textAlign = "left";
+    // xPercent = left edge of text block
+    xPercent = Math.round((avgLeft / imgWidth) * 100);
+  } else if (centerRatio > 0.62) {
+    textAlign = "right";
+    // xPercent = right edge of text block
+    xPercent = Math.round((avgRight / imgWidth) * 100);
+  } else {
+    textAlign = "center";
+    // xPercent = center of text block
+    xPercent = Math.round(centerRatio * 100);
+  }
 
   // Estimate font size from word heights
   // Word height ≈ cap height. Font size ≈ word height * 1.15 (ascender ratio)
