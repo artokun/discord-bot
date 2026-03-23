@@ -1274,8 +1274,19 @@
       const padding = Math.round(24 * scale);
       const lineHeight = scaledFontSize * 1.35;
 
-      // Draw overlay
-      if (position === 'bottom') {
+      // Draw overlay — use localized gradient when exact position is known
+      if (style.yPercent != null) {
+        const centerY = (style.yPercent / 100) * h;
+        const gradTop = Math.max(0, centerY - h * 0.2);
+        const gradBot = Math.min(h, centerY + h * 0.2);
+        const grad = ctx.createLinearGradient(0, gradTop, 0, gradBot);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(0.3, `rgba(0,0,0,${overlayAlpha * 0.5})`);
+        grad.addColorStop(0.7, `rgba(0,0,0,${overlayAlpha * 0.5})`);
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, gradTop, w, gradBot - gradTop);
+      } else if (position === 'bottom') {
         const grad = ctx.createLinearGradient(0, h * 0.45, 0, h);
         grad.addColorStop(0, 'rgba(0,0,0,0)');
         grad.addColorStop(0.5, `rgba(0,0,0,${overlayAlpha * 0.3})`);
@@ -1339,7 +1350,17 @@
       let textX = textAlign === 'center' ? w / 2 : textAlign === 'right' ? w - padding : padding;
       let textY;
 
-      if (position === 'bottom' || position === 'bottom-box') {
+      if (style.yPercent != null) {
+        // Exact positioning from OCR — yPercent is center of text block
+        textY = (style.yPercent / 100) * h - totalTextHeight / 2;
+        // Clamp to stay within canvas bounds
+        textY = Math.max(padding, Math.min(h - totalTextHeight - padding, textY));
+        // Exact X positioning if available
+        if (style.xPercent != null) {
+          textX = (style.xPercent / 100) * w;
+          textX = Math.max(padding, Math.min(w - padding, textX));
+        }
+      } else if (position === 'bottom' || position === 'bottom-box') {
         textY = h - totalTextHeight - padding * 1.5;
       } else if (position === 'top') {
         textY = padding * 2.5;

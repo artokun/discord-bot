@@ -13,6 +13,10 @@ export interface SlideStyle {
   textColor: string;
   textShadow: "strong" | "medium" | "outline" | "none";
   overlayOpacity: number;
+  /** Exact vertical position of text center as % of image height (0-100) */
+  yPercent?: number;
+  /** Exact horizontal position of text center as % of image width (0-100) */
+  xPercent?: number;
 }
 
 export interface TikTokSlide {
@@ -136,8 +140,10 @@ const OCR_STRATEGIES: OcrStrategy[] = [
 
 interface OcrResult {
   text: string;
-  /** Text vertical position as percentage (0=top, 100=bottom) */
+  /** Text block center Y as percentage of image height (0-100) */
   yPercent: number;
+  /** Text block center X as percentage of image width (0-100) */
+  xPercent: number;
   /** Text horizontal alignment: "left" | "center" | "right" */
   textAlign: "left" | "center" | "right";
 }
@@ -212,7 +218,7 @@ function parseTsvOutput(tsv: string, imgWidth: number, imgHeight: number): OcrRe
     maxBottom = Math.max(maxBottom, y2);
   }
 
-  if (textLines.length === 0) return { text: "", yPercent: 70, textAlign: "center" };
+  if (textLines.length === 0) return { text: "", yPercent: 70, xPercent: 50, textAlign: "center" };
 
   // Calculate vertical position (center of text block)
   const textCenterY = (minTop + maxBottom) / 2;
@@ -222,16 +228,18 @@ function parseTsvOutput(tsv: string, imgWidth: number, imgHeight: number): OcrRe
   const avgLeft = allLeft.reduce((a, b) => a + b, 0) / allLeft.length;
   const avgRight = allRight.reduce((a, b) => a + b, 0) / allRight.length;
   const textCenterX = (avgLeft + avgRight) / 2;
-  const xPercent = textCenterX / imgWidth;
+  const xPercentRaw = textCenterX / imgWidth;
+  const xPercent = Math.round(xPercentRaw * 100);
 
   let textAlign: "left" | "center" | "right";
-  if (xPercent < 0.38) textAlign = "left";
-  else if (xPercent > 0.62) textAlign = "right";
+  if (xPercentRaw < 0.38) textAlign = "left";
+  else if (xPercentRaw > 0.62) textAlign = "right";
   else textAlign = "center";
 
   return {
     text: textLines.join("\n"),
     yPercent,
+    xPercent,
     textAlign,
   };
 }
@@ -318,8 +326,10 @@ async function ocrSlides(slides: TikTokSlide[]): Promise<void> {
           textColor: "#ffffff",
           textShadow: "medium",
           overlayOpacity: 0.4,
+          yPercent: result.yPercent,
+          xPercent: result.xPercent,
         };
-        console.log(`  [ocr] Slide ${i + 1}: "${result.text.substring(0, 50)}" (${position}, ${result.textAlign}, y=${result.yPercent}%)`);
+        console.log(`  [ocr] Slide ${i + 1}: "${result.text.substring(0, 50)}" (x=${result.xPercent}%, y=${result.yPercent}%)`);
       } else {
         console.log(`  [ocr] Slide ${i + 1}: (no text detected)`);
       }
