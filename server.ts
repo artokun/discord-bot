@@ -263,7 +263,13 @@ Bun.serve({
     const path = url.pathname;
 
     // Serve frontend
-    if (path === "/" || path === "/index.html") {
+    if (path === "/" || path === "/tools") {
+      return new Response(Bun.file(join(PUBLIC_DIR, "tools.html")), {
+        headers: { "Content-Type": "text/html" },
+      });
+    }
+
+    if (path === "/video" || path === "/index.html") {
       return new Response(Bun.file(join(PUBLIC_DIR, "index.html")), {
         headers: { "Content-Type": "text/html" },
       });
