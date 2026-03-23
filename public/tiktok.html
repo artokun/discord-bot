@@ -808,6 +808,7 @@
 
     function updateSlideText(si, ci, value) {
       captionSets[si].slides[ci].text = value;
+      updateActionStates();
     }
 
     function removeSet(si) {
