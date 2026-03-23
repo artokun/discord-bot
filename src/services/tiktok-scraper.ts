@@ -199,102 +199,36 @@ async function scrapePostPage(
   page: Page,
   postUrl: string
 ): Promise<TikTokCaptionSet | null> {
-  // Set referer to look like normal TikTok browsing
-  await page.setExtraHTTPHeaders({ "Referer": "https://www.tiktok.com/" });
+  // Extract post ID from URL
+  const postIdMatch = postUrl.match(/\/(video|photo)\/(\d+)/);
+  const postId = postIdMatch?.[2];
 
-  // Navigate with error recovery — TikTok sometimes aborts photo post loads
-  try {
-    await page.goto(postUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-  } catch (navError: any) {
-    const msg = navError.message || "";
-    if (msg.includes("ERR_ABORTED") || msg.includes("net::ERR")) {
-      // Page may have partially loaded — wait and try to extract anyway
-      console.log(`  Navigation aborted, attempting extraction anyway...`);
-      await new Promise((r) => setTimeout(r, 3000));
-    } else {
-      throw navError;
-    }
+  // Strategy 1: Intercept TikTok's API response for full photo data
+  if (postId) {
+    const apiResult = await interceptPostData(page, postUrl, postId);
+    if (apiResult) return apiResult;
   }
 
-  // Try to extract SSR data first (faster and more reliable than DOM scraping)
-  const ssrResult = await page.evaluate(() => {
-    const el = document.getElementById("__UNIVERSAL_DATA_FOR_REHYDRATION__");
-    if (!el) return null;
-    try {
-      const data = JSON.parse(el.textContent || "");
-      const ds = data["__DEFAULT_SCOPE__"] || {};
-      const detail = ds["webapp.video-detail"] || {};
-      const item = detail?.itemInfo?.itemStruct;
-      if (!item) return null;
-
-      const desc = item.desc || "";
-      const hasImages = !!item.imagePost;
-      const images = item.imagePost?.images || [];
-
-      return {
-        desc,
-        hasImages,
-        images: images.map((img: any) => ({
-          url: img?.imageURL?.urlList?.[0] || img?.imageUrl?.urlList?.[0] || null,
-          width: img?.imageWidth || 0,
-          height: img?.imageHeight || 0,
-        })),
-      };
-    } catch {
-      return null;
-    }
-  });
-
-  if (ssrResult) {
-    if (ssrResult.hasImages && ssrResult.images.length > 0) {
-      console.log(`  Slideshow: ${ssrResult.images.length} images, desc: "${ssrResult.desc.substring(0, 60)}"`);
-      return {
-        id: captionSetId++,
-        source: postUrl,
-        title: ssrResult.desc,
-        slides: ssrResult.images.map((img: any) => ({
-          text: "",
-          style: null,
-          originalImageUrl: img.url,
-        })),
-      };
-    } else {
-      // Regular video
-      if (!ssrResult.desc) return null;
-      return {
-        id: captionSetId++,
-        source: postUrl,
-        title: ssrResult.desc,
-        slides: [{ text: ssrResult.desc, style: null, originalImageUrl: null }],
-      };
-    }
-  }
-
-  // Fallback: wait for page to fully render and scrape DOM
+  // Strategy 2: DOM fallback — navigate and wait for render
+  console.log(`  API intercept missed, falling back to DOM scrape...`);
   await page.waitForNetworkIdle({ timeout: 30000 }).catch(() => null);
-  await new Promise((r) => setTimeout(r, 2000));
+  await new Promise((r) => setTimeout(r, 3000));
 
-  // Extract everything we can from the rendered DOM
   const domResult = await page.evaluate(() => {
-    // Get description
     const descEl = document.querySelector(
       '[data-e2e="browse-video-desc"], [data-e2e="video-desc"], [class*="SpanText"], [class*="desc"]'
     );
     const desc = descEl?.textContent?.trim() || "";
 
-    // Get all images in the photo carousel/viewer
     const images: string[] = [];
-    // TikTok photo posts use various selectors for images
     const selectors = [
       '[class*="photoSwiper"] img',
       '[class*="ImageCarousel"] img',
       '[class*="photo-detail"] img',
-      '[class*="xgplayer"] img',
       '[class*="swiper-slide"] img',
       'img[class*="ImgPhoto"]',
       'img[class*="photo"]',
     ];
-
     for (const sel of selectors) {
       document.querySelectorAll(sel).forEach((img) => {
         const src = (img as HTMLImageElement).src;
@@ -303,8 +237,6 @@ async function scrapePostPage(
         }
       });
     }
-
-    // If no carousel images found, try ALL large images on page
     if (images.length === 0) {
       document.querySelectorAll('img').forEach((img) => {
         const src = img.src;
@@ -315,11 +247,10 @@ async function scrapePostPage(
         }
       });
     }
-
     return { desc, images };
   });
 
-  console.log(`  DOM fallback: ${domResult.images.length} images, desc: "${domResult.desc.substring(0, 50)}"`);
+  console.log(`  DOM fallback: ${domResult.images.length} images`);
 
   if (domResult.images.length > 0) {
     return {
@@ -335,13 +266,121 @@ async function scrapePostPage(
   }
 
   if (!domResult.desc) return null;
-
   return {
     id: captionSetId++,
     source: postUrl,
     title: domResult.desc,
     slides: [{ text: domResult.desc, style: null, originalImageUrl: null }],
   };
+}
+
+async function interceptPostData(
+  page: Page,
+  postUrl: string,
+  postId: string
+): Promise<TikTokCaptionSet | null> {
+  return new Promise(async (resolve) => {
+    let resolved = false;
+
+    // Listen for the API response that contains post detail data
+    const handler = async (response: any) => {
+      if (resolved) return;
+      const url = response.url();
+      // TikTok fetches post data from these API endpoints
+      if (url.includes('/api/item/detail') || url.includes('/api/post/item_list') ||
+          url.includes('item_detail') || url.includes('/api/recommend')) {
+        try {
+          const json = await response.json();
+          const item = json?.itemInfo?.itemStruct ||
+                       json?.itemList?.find((i: any) => i.id === postId) ||
+                       json?.item;
+          if (item && (item.imagePost || item.photoMode)) {
+            const images = item.imagePost?.images || [];
+            if (images.length > 0) {
+              resolved = true;
+              page.off('response', handler);
+              console.log(`  Intercepted API: ${images.length} images, desc: "${(item.desc || '').substring(0, 50)}"`);
+              resolve({
+                id: captionSetId++,
+                source: postUrl,
+                title: item.desc || "",
+                slides: images.map((img: any) => ({
+                  text: "",
+                  style: null,
+                  originalImageUrl: img?.imageURL?.urlList?.[0] || img?.imageUrl?.urlList?.[0] || null,
+                })),
+              });
+              return;
+            }
+          }
+        } catch { /* not JSON or wrong response */ }
+      }
+    };
+
+    page.on('response', handler);
+
+    // Navigate
+    await page.setExtraHTTPHeaders({ "Referer": "https://www.tiktok.com/" });
+    try {
+      await page.goto(postUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+    } catch (e: any) {
+      if (!e.message?.includes("ERR_ABORTED") && !e.message?.includes("net::ERR")) {
+        page.off('response', handler);
+        resolve(null);
+        return;
+      }
+    }
+
+    // Also check SSR data in case it's there
+    if (!resolved) {
+      const ssrResult = await page.evaluate(() => {
+        const el = document.getElementById("__UNIVERSAL_DATA_FOR_REHYDRATION__");
+        if (!el) return null;
+        try {
+          const data = JSON.parse(el.textContent || "");
+          const ds = data["__DEFAULT_SCOPE__"] || {};
+          const detail = ds["webapp.video-detail"] || {};
+          const item = detail?.itemInfo?.itemStruct;
+          if (!item) return null;
+          const images = item.imagePost?.images || [];
+          return {
+            desc: item.desc || "",
+            hasImages: !!item.imagePost && images.length > 0,
+            images: images.map((img: any) => ({
+              url: img?.imageURL?.urlList?.[0] || img?.imageUrl?.urlList?.[0] || null,
+            })),
+          };
+        } catch { return null; }
+      });
+
+      if (ssrResult?.hasImages) {
+        resolved = true;
+        page.off('response', handler);
+        console.log(`  SSR data: ${ssrResult.images.length} images`);
+        resolve({
+          id: captionSetId++,
+          source: postUrl,
+          title: ssrResult.desc,
+          slides: ssrResult.images.map((img: any) => ({
+            text: "",
+            style: null,
+            originalImageUrl: img.url,
+          })),
+        });
+        return;
+      }
+    }
+
+    // Wait for API response to arrive (TikTok loads data async)
+    if (!resolved) {
+      await new Promise((r) => setTimeout(r, 8000));
+    }
+
+    if (!resolved) {
+      page.off('response', handler);
+      resolve(null);
+    }
+  });
 }
 
 
