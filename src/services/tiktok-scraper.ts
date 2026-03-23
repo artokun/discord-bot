@@ -68,7 +68,6 @@ async function createBrowser(): Promise<Browser> {
       "--disable-software-rasterizer",
       "--disable-extensions",
       "--disable-blink-features=AutomationControlled",
-      "--single-process",
       "--no-zygote",
       "--window-size=1280,900",
     ],
@@ -103,7 +102,14 @@ export async function scrapeTikTokProfile(
     const page = await setupPage(browser, cachedCookies);
 
     // Navigate to profile
-    await page.goto(profileUrl, { waitUntil: "networkidle2", timeout: 60000 });
+    await page.setExtraHTTPHeaders({ "Referer": "https://www.tiktok.com/" });
+    await page.goto(profileUrl, { waitUntil: "networkidle2", timeout: 60000 }).catch(async (e: any) => {
+      if (e.message?.includes("ERR_ABORTED")) {
+        await new Promise((r) => setTimeout(r, 5000));
+      } else {
+        throw e;
+      }
+    });
 
     // Wait for video grid to load
     await page.waitForSelector('[data-e2e="user-post-item"], [class*="DivItemContainer"]', {
@@ -193,7 +199,22 @@ async function scrapePostPage(
   page: Page,
   postUrl: string
 ): Promise<TikTokCaptionSet | null> {
-  await page.goto(postUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+  // Set referer to look like normal TikTok browsing
+  await page.setExtraHTTPHeaders({ "Referer": "https://www.tiktok.com/" });
+
+  // Navigate with error recovery — TikTok sometimes aborts photo post loads
+  try {
+    await page.goto(postUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+  } catch (navError: any) {
+    const msg = navError.message || "";
+    if (msg.includes("ERR_ABORTED") || msg.includes("net::ERR")) {
+      // Page may have partially loaded — wait and try to extract anyway
+      console.log(`  Navigation aborted, attempting extraction anyway...`);
+      await new Promise((r) => setTimeout(r, 3000));
+    } else {
+      throw navError;
+    }
+  }
 
   // Try to extract SSR data first (faster and more reliable than DOM scraping)
   const ssrResult = await page.evaluate(() => {
