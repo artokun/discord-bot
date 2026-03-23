@@ -33,9 +33,15 @@ let captionSetId = 0;
 let cachedCookies: Cookie[] | null = null;
 
 function loadCookies(cookiePath?: string): Cookie[] {
-  const path = cookiePath || COOKIES_PATH;
-  if (!existsSync(path)) throw new Error(`Cookie file not found: ${path}`);
-  const raw = JSON.parse(readFileSync(path, "utf-8"));
+  // Try env var first (base64 encoded), then file
+  let raw: any[];
+  if (process.env.TIKTOK_COOKIES_B64) {
+    raw = JSON.parse(Buffer.from(process.env.TIKTOK_COOKIES_B64, "base64").toString("utf-8"));
+  } else {
+    const path = cookiePath || COOKIES_PATH;
+    if (!existsSync(path)) throw new Error(`Cookie file not found: ${path}. Set TIKTOK_COOKIES_B64 env var or provide the file.`);
+    raw = JSON.parse(readFileSync(path, "utf-8"));
+  }
 
   // Convert from browser extension export format to Puppeteer format
   return raw.map((c: any) => ({
