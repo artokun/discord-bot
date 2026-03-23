@@ -63,9 +63,16 @@ async function createBrowser(): Promise<Browser> {
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+      "--disable-extensions",
       "--disable-blink-features=AutomationControlled",
+      "--single-process",
+      "--no-zygote",
       "--window-size=1280,900",
     ],
+    protocolTimeout: 60000,
   });
 }
 
@@ -96,11 +103,11 @@ export async function scrapeTikTokProfile(
     const page = await setupPage(browser, cachedCookies);
 
     // Navigate to profile
-    await page.goto(profileUrl, { waitUntil: "networkidle2", timeout: 30000 });
+    await page.goto(profileUrl, { waitUntil: "networkidle2", timeout: 60000 });
 
     // Wait for video grid to load
     await page.waitForSelector('[data-e2e="user-post-item"], [class*="DivItemContainer"]', {
-      timeout: 15000,
+      timeout: 60000,
     }).catch(() => null);
 
     // Scroll down to load more posts
@@ -186,7 +193,7 @@ async function scrapePostPage(
   page: Page,
   postUrl: string
 ): Promise<TikTokCaptionSet | null> {
-  await page.goto(postUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
+  await page.goto(postUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
 
   // Try to extract SSR data first (faster and more reliable than DOM scraping)
   const ssrResult = await page.evaluate(() => {
@@ -243,7 +250,7 @@ async function scrapePostPage(
   }
 
   // Fallback: wait for page to fully render and scrape DOM
-  await page.waitForNetworkIdle({ timeout: 10000 }).catch(() => null);
+  await page.waitForNetworkIdle({ timeout: 30000 }).catch(() => null);
   await new Promise((r) => setTimeout(r, 2000));
 
   // Extract everything we can from the rendered DOM
@@ -337,7 +344,7 @@ if (import.meta.main) {
     const cookies = loadCookies(cookiePath);
     const browser = await createBrowser();
     const page = await setupPage(browser, cookies);
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
 
     const rawData = await page.evaluate(() => {
       const el = document.getElementById("__UNIVERSAL_DATA_FOR_REHYDRATION__");
