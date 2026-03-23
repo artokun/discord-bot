@@ -1,10 +1,9 @@
-import puppeteer, { type Browser, type Page, type Cookie } from "puppeteer-core";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "fs";
 import { join } from "path";
+import { $ } from "bun";
 
-const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH
-  || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const COOKIES_PATH = join(import.meta.dir, "../../tiktok-cookies.json");
+const CACHE_DIR = join(import.meta.dir, "../../tiktok-cache");
 
 export interface SlideStyle {
   position: "bottom" | "center" | "top";
@@ -30,334 +29,192 @@ export interface TikTokCaptionSet {
 }
 
 let captionSetId = 0;
-let cachedCookies: Cookie[] | null = null;
+let cookiesFilePath: string | null = null;
 
-function loadCookies(cookiePath?: string): Cookie[] {
-  // Try env var first (base64 encoded), then file
-  let raw: any[];
+/**
+ * Ensure we have a cookies file gallery-dl can read.
+ * Accepts either a JSON cookie export or Netscape format.
+ * Converts JSON to Netscape if needed.
+ */
+function getCookiesPath(): string {
+  if (cookiesFilePath && existsSync(cookiesFilePath)) return cookiesFilePath;
+
+  mkdirSync(CACHE_DIR, { recursive: true });
+  const netscapePath = join(CACHE_DIR, "cookies.txt");
+
+  // Try env var first (base64 encoded JSON)
+  let raw: any[] | null = null;
   if (process.env.TIKTOK_COOKIES_B64) {
     raw = JSON.parse(Buffer.from(process.env.TIKTOK_COOKIES_B64, "base64").toString("utf-8"));
-  } else {
-    const path = cookiePath || COOKIES_PATH;
-    if (!existsSync(path)) throw new Error(`Cookie file not found: ${path}. Set TIKTOK_COOKIES_B64 env var or provide the file.`);
-    raw = JSON.parse(readFileSync(path, "utf-8"));
+  } else if (existsSync(COOKIES_PATH)) {
+    raw = JSON.parse(readFileSync(COOKIES_PATH, "utf-8"));
   }
 
-  // Convert from browser extension export format to Puppeteer format
-  return raw.map((c: any) => ({
-    name: c.name,
-    value: c.value,
-    domain: c.domain,
-    path: c.path || "/",
-    httpOnly: c.httpOnly || false,
-    secure: c.secure || false,
-    sameSite: c.sameSite === "no_restriction" ? "None" : c.sameSite === "lax" ? "Lax" : "Strict",
-    ...(c.expirationDate ? { expires: c.expirationDate } : {}),
-  }));
+  if (!raw) {
+    throw new Error("No TikTok cookies found. Set TIKTOK_COOKIES_B64 env var or provide tiktok-cookies.json");
+  }
+
+  // Convert JSON cookies to Netscape format
+  const lines = ["# Netscape HTTP Cookie File"];
+  for (const c of raw) {
+    const domain = c.domain || "";
+    const flag = domain.startsWith(".") ? "TRUE" : "FALSE";
+    const path = c.path || "/";
+    const secure = c.secure ? "TRUE" : "FALSE";
+    const expires = String(Math.floor(c.expirationDate || 0));
+    lines.push(`${domain}\t${flag}\t${path}\t${secure}\t${expires}\t${c.name}\t${c.value}`);
+  }
+  writeFileSync(netscapePath, lines.join("\n") + "\n");
+  cookiesFilePath = netscapePath;
+  return netscapePath;
 }
 
-async function createBrowser(): Promise<Browser> {
-  return puppeteer.launch({
-    executablePath: CHROME_PATH,
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-      "--disable-extensions",
-      "--disable-blink-features=AutomationControlled",
-      "--no-zygote",
-      "--window-size=1280,900",
-    ],
-    protocolTimeout: 60000,
-  });
-}
-
-async function setupPage(browser: Browser, cookies: Cookie[]): Promise<Page> {
-  const page = await browser.newPage();
-
-  await page.setUserAgent(
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+/**
+ * Run gallery-dl --dump-json and parse the structured output.
+ * Returns post metadata + image URLs.
+ */
+async function galleryDlJson(url: string): Promise<any[]> {
+  const cookies = getCookiesPath();
+  const proc = Bun.spawn(
+    ["gallery-dl", "--cookies", cookies, "--dump-json", url],
+    { stdout: "pipe", stderr: "pipe" }
   );
 
-  // Set cookies before navigating
-  await page.setCookie(...cookies);
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const exitCode = await proc.exited;
 
-  return page;
+  if (exitCode !== 0 && !stdout.trim()) {
+    console.error(`gallery-dl error: ${stderr}`);
+    throw new Error(`gallery-dl failed: ${stderr.split("\n").pop()}`);
+  }
+
+  if (stderr) {
+    // Log warnings but don't fail
+    for (const line of stderr.split("\n").filter(Boolean)) {
+      console.log(`[gallery-dl] ${line}`);
+    }
+  }
+
+  return JSON.parse(stdout);
 }
 
-export async function scrapeTikTokProfile(
-  profileUrl: string,
-  cookiePath?: string
-): Promise<{ sets: TikTokCaptionSet[] }> {
-  if (!cachedCookies) {
-    cachedCookies = loadCookies(cookiePath);
-  }
+/**
+ * Download images from a TikTok post to a temp directory.
+ * Returns the directory path containing the downloaded images.
+ */
+async function galleryDlDownload(url: string): Promise<string> {
+  const cookies = getCookiesPath();
+  const destDir = join(CACHE_DIR, `dl-${Date.now()}`);
+  mkdirSync(destDir, { recursive: true });
 
-  const browser = await createBrowser();
+  const proc = Bun.spawn(
+    ["gallery-dl", "--cookies", cookies, "-d", destDir, "--no-download", url],
+    { stdout: "pipe", stderr: "pipe" }
+  );
 
-  try {
-    const page = await setupPage(browser, cachedCookies);
+  await proc.exited;
+  return destDir;
+}
 
-    // Navigate to profile
-    await page.setExtraHTTPHeaders({ "Referer": "https://www.tiktok.com/" });
-    await page.goto(profileUrl, { waitUntil: "networkidle2", timeout: 60000 }).catch(async (e: any) => {
-      if (e.message?.includes("ERR_ABORTED")) {
-        await new Promise((r) => setTimeout(r, 5000));
-      } else {
-        throw e;
+/**
+ * Parse gallery-dl JSON output into our TikTokCaptionSet format.
+ * gallery-dl returns:
+ *   Entry 0: [2, {metadata}]           — directory/post metadata
+ *   Entry 1+: [3, "image_url", {meta}] — individual image files
+ */
+function parseGalleryDlEntries(entries: any[], sourceUrl: string): TikTokCaptionSet[] {
+  const sets: TikTokCaptionSet[] = [];
+  let currentSet: TikTokCaptionSet | null = null;
+
+  for (const entry of entries) {
+    const type = entry[0];
+
+    if (type === 2) {
+      // Directory entry = new post
+      if (currentSet && currentSet.slides.length > 0) {
+        sets.push(currentSet);
       }
-    });
-
-    // Wait for video grid to load
-    await page.waitForSelector('[data-e2e="user-post-item"], [class*="DivItemContainer"]', {
-      timeout: 60000,
-    }).catch(() => null);
-
-    // Scroll down to load more posts
-    await autoScroll(page, 3);
-
-    // Extract post links from the page
-    const postLinks = await page.evaluate(() => {
-      const links: string[] = [];
-      // Find all post links in the video grid
-      const anchors = document.querySelectorAll('a[href*="/video/"], a[href*="/photo/"]');
-      anchors.forEach((a) => {
-        const href = (a as HTMLAnchorElement).href;
-        if (href && !links.includes(href)) links.push(href);
-      });
-      return links;
-    });
-
-    console.log(`Found ${postLinks.length} post links`);
-
-    // Filter to slideshow posts only (photo URLs)
-    const photoLinks = postLinks.filter((l) => l.includes("/photo/"));
-    const videoLinks = postLinks.filter((l) => l.includes("/video/"));
-    console.log(`  ${photoLinks.length} slideshows, ${videoLinks.length} videos`);
-
-    // Close the profile page to free memory
-    await page.close();
-
-    // Scrape slideshow posts using a single reusable page
-    const sets: TikTokCaptionSet[] = [];
-    const limit = Math.min(photoLinks.length, 20);
-    const scrapePage = await setupPage(browser, cachedCookies!);
-
-    for (let i = 0; i < limit; i++) {
-      const link = photoLinks[i];
-      console.log(`Scraping ${i + 1}/${limit}: ${link}`);
-      try {
-        const set = await scrapePostPage(scrapePage, link);
-        if (set) sets.push(set);
-      } catch (e) {
-        console.error(`  Failed: ${(e as Error).message}`);
-        // If the page crashed, create a new one
-        try {
-          await scrapePage.close();
-        } catch {}
-        try {
-          const newPage = await setupPage(browser, cachedCookies!);
-          Object.assign(scrapePage, newPage);
-        } catch {
-          console.error("  Browser crashed, stopping");
-          break;
+      const meta = entry[1];
+      const imagePost = meta.imagePost || {};
+      const desc = meta.desc || "";
+      currentSet = {
+        id: captionSetId++,
+        source: sourceUrl,
+        title: desc,
+        slides: [],
+      };
+    } else if (type === 3) {
+      // File entry = image or audio
+      const url = entry[1];
+      if (typeof url === "string" && isImageUrl(url)) {
+        if (!currentSet) {
+          currentSet = {
+            id: captionSetId++,
+            source: sourceUrl,
+            title: "",
+            slides: [],
+          };
         }
+        currentSet.slides.push({
+          text: "",
+          style: null,
+          originalImageUrl: url,
+        });
       }
     }
-
-    try { await scrapePage.close(); } catch {}
-
-    return { sets };
-  } finally {
-    await browser.close();
+    // Type 6 = redirect entries (avatar, /posts), skip
   }
+
+  if (currentSet && currentSet.slides.length > 0) {
+    sets.push(currentSet);
+  }
+
+  return sets;
+}
+
+function isImageUrl(url: string): boolean {
+  const lower = url.toLowerCase();
+  return (
+    lower.includes(".jpg") ||
+    lower.includes(".jpeg") ||
+    lower.includes(".png") ||
+    lower.includes(".webp") ||
+    lower.includes("photomode")
+  );
 }
 
 export async function scrapeTikTokPost(
-  postUrl: string,
-  cookiePath?: string
-): Promise<{ sets: TikTokCaptionSet[] }> {
-  if (!cachedCookies) {
-    cachedCookies = loadCookies(cookiePath);
-  }
-
-  const browser = await createBrowser();
-
-  try {
-    const page = await setupPage(browser, cachedCookies);
-    const set = await scrapePostPage(page, postUrl);
-    return { sets: set ? [set] : [] };
-  } finally {
-    await browser.close();
-  }
-}
-
-async function scrapePostPage(
-  page: Page,
   postUrl: string
-): Promise<TikTokCaptionSet | null> {
-  // Navigate to the post
-  await page.setExtraHTTPHeaders({ "Referer": "https://www.tiktok.com/" });
-  try {
-    await page.goto(postUrl, { waitUntil: "networkidle2", timeout: 60000 });
-  } catch (e: any) {
-    if (!e.message?.includes("ERR_ABORTED") && !e.message?.includes("net::ERR")) {
-      throw e;
-    }
-    // ERR_ABORTED is common — page may still be usable
-    console.log(`  Navigation aborted, waiting for render...`);
-  }
-
-  // Wait for the swiper/carousel to render — retry until we get multiple slides
-  await page.waitForSelector('.swiper-slide img, img[class*="ImgPhoto"]', {
-    timeout: 20000,
-  }).catch(() => null);
-
-  // Poll until swiper has loaded all slides (not just 1)
-  // On slow containers, the swiper takes time to initialize all slides
-  for (let attempt = 0; attempt < 8; attempt++) {
-    await new Promise((r) => setTimeout(r, 2000));
-    const slideCount = await page.evaluate(() => {
-      return document.querySelectorAll(
-        '.swiper-slide:not(.swiper-slide-duplicate) img[class*="ImgPhoto"]'
-      ).length;
-    }).catch(() => 0);
-    if (slideCount > 1) {
-      console.log(`  Swiper loaded ${slideCount} slides after ${(attempt + 1) * 2}s`);
-      break;
-    }
-    if (attempt === 7) {
-      console.log(`  Swiper still has ${slideCount} slide(s) after 16s, proceeding anyway`);
-    }
-  }
-
-  // Extract slide images and description from rendered DOM
-  const result = await page.evaluate(() => {
-    // Get description
-    const descEl = document.querySelector(
-      '[data-e2e="browse-video-desc"], [data-e2e="video-desc"], [class*="SpanText"]'
-    );
-    const desc = descEl?.textContent?.trim() || "";
-
-    // Strategy 1: Non-duplicate swiper slides (best — gets exact slide count)
-    const swiperImgs = document.querySelectorAll(
-      '.swiper-slide:not(.swiper-slide-duplicate) img[class*="ImgPhoto"]'
-    );
-    if (swiperImgs.length > 0) {
-      const urls: string[] = [];
-      swiperImgs.forEach(img => {
-        const src = (img as HTMLImageElement).src;
-        if (src && !urls.includes(src)) urls.push(src);
-      });
-      return { desc, images: urls, method: 'swiper-dedup' };
-    }
-
-    // Strategy 2: All ImgPhoto images, deduplicated by URL
-    const photoImgs = document.querySelectorAll('img[class*="ImgPhoto"]');
-    if (photoImgs.length > 0) {
-      const urls: string[] = [];
-      photoImgs.forEach(img => {
-        const src = (img as HTMLImageElement).src;
-        if (src && !urls.includes(src)) urls.push(src);
-      });
-      return { desc, images: urls, method: 'imgphoto-dedup' };
-    }
-
-    // Strategy 3: Any large images on the page
-    const urls: string[] = [];
-    document.querySelectorAll('img').forEach(img => {
-      const src = img.src;
-      const w = img.naturalWidth || img.width;
-      const h = img.naturalHeight || img.height;
-      if (src && w > 300 && h > 300 &&
-          !src.includes('avatar') && !src.includes('static') &&
-          !src.includes('music') && !urls.includes(src)) {
-        urls.push(src);
-      }
-    });
-    return { desc, images: urls, method: 'large-imgs' };
-  });
-
-  console.log(`  ${result.method}: ${result.images.length} images, desc: "${result.desc.substring(0, 50)}"`);
-
-  if (result.images.length > 0) {
-    return {
-      id: captionSetId++,
-      source: postUrl,
-      title: result.desc,
-      slides: result.images.map((url) => ({
-        text: "",
-        style: null,
-        originalImageUrl: url,
-      })),
-    };
-  }
-
-  if (!result.desc) return null;
-  return {
-    id: captionSetId++,
-    source: postUrl,
-    title: result.desc,
-    slides: [{ text: result.desc, style: null, originalImageUrl: null }],
-  };
+): Promise<{ sets: TikTokCaptionSet[] }> {
+  console.log(`[gallery-dl] Scraping post: ${postUrl}`);
+  const entries = await galleryDlJson(postUrl);
+  const sets = parseGalleryDlEntries(entries, postUrl);
+  console.log(`[gallery-dl] Got ${sets.length} set(s) with ${sets.reduce((n, s) => n + s.slides.length, 0)} total slides`);
+  return { sets };
 }
 
-
-async function autoScroll(page: Page, scrolls: number) {
-  for (let i = 0; i < scrolls; i++) {
-    await page.evaluate(() => window.scrollBy(0, window.innerHeight));
-    await new Promise((r) => setTimeout(r, 1500));
-  }
+export async function scrapeTikTokProfile(
+  profileUrl: string
+): Promise<{ sets: TikTokCaptionSet[] }> {
+  console.log(`[gallery-dl] Scraping profile: ${profileUrl}`);
+  const entries = await galleryDlJson(profileUrl);
+  const sets = parseGalleryDlEntries(entries, profileUrl);
+  // Filter to only slideshow posts (sets with >1 slide)
+  const slideshowSets = sets.filter(s => s.slides.length > 1);
+  console.log(`[gallery-dl] Got ${sets.length} total posts, ${slideshowSets.length} slideshows`);
+  return { sets: slideshowSets };
 }
 
 // CLI test
 if (import.meta.main) {
   const url = process.argv[2] || "https://www.tiktok.com/@beaublissx";
-  const debug = process.argv.includes("--debug");
-  const cookiePath = process.argv[3] === "--debug" ? undefined : process.argv[3];
-
   console.log(`Scraping: ${url}`);
 
-  if (debug) {
-    // Debug mode: dump raw SSR data for a single post
-    const cookies = loadCookies(cookiePath);
-    const browser = await createBrowser();
-    const page = await setupPage(browser, cookies);
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+  const isProfile = /tiktok\.com\/@[\w.]+\/?$/.test(url);
+  const result = isProfile
+    ? await scrapeTikTokProfile(url)
+    : await scrapeTikTokPost(url);
 
-    const rawData = await page.evaluate(() => {
-      const el = document.getElementById("__UNIVERSAL_DATA_FOR_REHYDRATION__");
-      if (!el) return null;
-      try {
-        const data = JSON.parse(el.textContent || "");
-        const ds = data["__DEFAULT_SCOPE__"] || {};
-        const detail = ds["webapp.video-detail"] || {};
-        const item = detail?.itemInfo?.itemStruct;
-        if (!item) return { keys: Object.keys(ds), detailKeys: Object.keys(detail) };
-        return {
-          desc: item.desc,
-          hasImagePost: !!item.imagePost,
-          imagePostKeys: item.imagePost ? Object.keys(item.imagePost) : [],
-          imageCount: item.imagePost?.images?.length || 0,
-          itemKeys: Object.keys(item).filter((k: string) =>
-            ["image", "photo", "slide", "carousel", "pic"].some((p) => k.toLowerCase().includes(p))
-          ),
-          allKeys: Object.keys(item),
-        };
-      } catch { return null; }
-    });
-
-    console.log("RAW SSR:", JSON.stringify(rawData, null, 2));
-    await browser.close();
-  } else {
-    const isProfile = /tiktok\.com\/@[\w.]+\/?$/.test(url);
-    const result = isProfile
-      ? await scrapeTikTokProfile(url, cookiePath)
-      : await scrapeTikTokPost(url, cookiePath);
-
-    console.log(JSON.stringify(result, null, 2));
-  }
+  console.log(JSON.stringify(result, null, 2));
 }

@@ -9,7 +9,6 @@
   },
   "dependencies": {
     "discord.js": "^14.18.0",
-    "puppeteer-core": "^24.40.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

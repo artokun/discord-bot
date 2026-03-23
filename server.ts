@@ -11,7 +11,7 @@ for (const dir of [UPLOAD_DIR, OUTPUT_DIR, TIKTOK_CACHE_DIR]) {
   mkdirSync(dir, { recursive: true });
 }
 
-// --- TikTok Scraping (Puppeteer-based) ---
+// --- TikTok Scraping (gallery-dl) ---
 import { scrapeTikTokProfile, scrapeTikTokPost } from "./src/services/tiktok-scraper";
 
 
