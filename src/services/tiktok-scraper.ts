@@ -194,20 +194,22 @@ async function ocrImage(imagePath: string): Promise<string> {
 
 /**
  * Download + OCR all slides in a set.
+ * Processes one at a time to keep memory low on small containers.
  */
 async function ocrSlides(slides: TikTokSlide[]): Promise<void> {
   const tmpDir = join(CACHE_DIR, "dl-tmp");
   mkdirSync(tmpDir, { recursive: true });
 
-  const tasks = slides.map(async (slide, i) => {
-    if (!slide.originalImageUrl) return;
+  for (let i = 0; i < slides.length; i++) {
+    const slide = slides[i];
+    if (!slide.originalImageUrl) continue;
 
-    const imgPath = join(tmpDir, `slide_${Date.now()}_${i}.jpg`);
+    const imgPath = join(tmpDir, `slide_${i}.jpg`);
     try {
       const ok = await downloadImage(slide.originalImageUrl, imgPath);
       if (!ok) {
         console.log(`  [ocr] Failed to download slide ${i + 1}`);
-        return;
+        continue;
       }
 
       const text = await ocrImage(imgPath);
@@ -220,11 +222,6 @@ async function ocrSlides(slides: TikTokSlide[]): Promise<void> {
     } finally {
       try { unlinkSync(imgPath); } catch {}
     }
-  });
-
-  // Process 3 at a time
-  for (let i = 0; i < tasks.length; i += 3) {
-    await Promise.all(tasks.slice(i, i + 3));
   }
 }
 
