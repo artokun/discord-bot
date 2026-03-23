@@ -227,9 +227,9 @@ function parseTsvOutput(tsv: string, imgWidth: number, imgHeight: number): OcrRe
 
   if (textLines.length === 0) return { text: "", yPercent: 70, xPercent: 50, textAlign: "center", fontSize: 32 };
 
-  // Calculate vertical position (center of text block)
-  const textCenterY = (minTop + maxBottom) / 2;
-  const yPercent = Math.round((textCenterY / imgHeight) * 100);
+  // Calculate vertical position (top of text block — more reliable than center
+  // since center shifts when LLM cleans up text length)
+  const yPercent = Math.round((minTop / imgHeight) * 100);
 
   // Calculate horizontal alignment and anchor point
   const avgLeft = allLeft.reduce((a, b) => a + b, 0) / allLeft.length;

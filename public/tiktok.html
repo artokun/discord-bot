@@ -1274,15 +1274,14 @@
 
       // Draw overlay — use gradient that covers the text region
       if (style.yPercent != null) {
-        // Gradient from above text to below, fading in and out
-        const centerY = (style.yPercent / 100) * h;
-        const gradTop = Math.max(0, centerY - h * 0.35);
-        const gradBot = Math.min(h, centerY + h * 0.35);
+        // Gradient from above text top to bottom of image
+        const textTop = (style.yPercent / 100) * h;
+        const gradTop = Math.max(0, textTop - h * 0.15);
+        const gradBot = h;
         const grad = ctx.createLinearGradient(0, gradTop, 0, gradBot);
         grad.addColorStop(0, 'rgba(0,0,0,0)');
-        grad.addColorStop(0.2, `rgba(0,0,0,${overlayAlpha * 0.6})`);
-        grad.addColorStop(0.8, `rgba(0,0,0,${overlayAlpha * 0.6})`);
-        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        grad.addColorStop(0.15, `rgba(0,0,0,${overlayAlpha * 0.5})`);
+        grad.addColorStop(1, `rgba(0,0,0,${overlayAlpha * 0.7})`);
         ctx.fillStyle = grad;
         ctx.fillRect(0, gradTop, w, gradBot - gradTop);
       } else if (position === 'bottom') {
@@ -1350,8 +1349,8 @@
       let textY;
 
       if (style.yPercent != null) {
-        // Exact positioning from OCR — yPercent is center of text block
-        textY = (style.yPercent / 100) * h - totalTextHeight / 2;
+        // Exact positioning from OCR — yPercent is top of text block
+        textY = (style.yPercent / 100) * h;
         textY = Math.max(padding, Math.min(h - totalTextHeight - padding, textY));
         // xPercent is the anchor point matching textAlign:
         //   left-aligned: xPercent = left edge
