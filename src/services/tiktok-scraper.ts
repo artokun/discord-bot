@@ -122,13 +122,16 @@ interface OcrStrategy {
   filter: string;
 }
 
+// Scale down to 800px wide first to reduce memory, then preprocess
+const SCALE = "scale=800:-1,";
+
 const OCR_STRATEGIES: OcrStrategy[] = [
   // Pass 1: white text — negate + aggressive binarize
-  { name: "white-text", filter: "negate,curves=all='0/0 0.3/1 1/1'" },
+  { name: "white-text", filter: `${SCALE}negate,curves=all='0/0 0.3/1 1/1'` },
   // Pass 2: colored/dark text — high contrast without negate
-  { name: "color-text", filter: "eq=contrast=3:brightness=-0.3" },
+  { name: "color-text", filter: `${SCALE}eq=contrast=3:brightness=-0.3` },
   // Pass 3: colored text — grayscale + strong threshold
-  { name: "gray-thresh", filter: "format=gray,negate,eq=contrast=3" },
+  { name: "gray-thresh", filter: `${SCALE}format=gray,negate,eq=contrast=3` },
 ];
 
 async function runTesseract(imagePath: string, cwd: string): Promise<string> {
