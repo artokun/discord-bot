@@ -146,6 +146,8 @@ interface OcrResult {
   xPercent: number;
   /** Text horizontal alignment: "left" | "center" | "right" */
   textAlign: "left" | "center" | "right";
+  /** Estimated font size, calibrated to 400px reference width (for the frontend scaler) */
+  fontSize: number;
 }
 
 async function runTesseractTsv(imagePath: string, cwd: string): Promise<string> {
@@ -196,6 +198,7 @@ function parseTsvOutput(tsv: string, imgWidth: number, imgHeight: number): OcrRe
   const textLines: string[] = [];
   let allLeft: number[] = [];
   let allRight: number[] = [];
+  let allWordHeights: number[] = [];
   let minTop = Infinity;
   let maxBottom = 0;
 
@@ -216,9 +219,13 @@ function parseTsvOutput(tsv: string, imgWidth: number, imgHeight: number): OcrRe
     allRight.push(x2);
     minTop = Math.min(minTop, y1);
     maxBottom = Math.max(maxBottom, y2);
+    // Collect word heights for font size estimation (skip very small words like "i")
+    for (const w of group) {
+      if (w.h > 10 && w.text.length > 1) allWordHeights.push(w.h);
+    }
   }
 
-  if (textLines.length === 0) return { text: "", yPercent: 70, xPercent: 50, textAlign: "center" };
+  if (textLines.length === 0) return { text: "", yPercent: 70, xPercent: 50, textAlign: "center", fontSize: 32 };
 
   // Calculate vertical position (center of text block)
   const textCenterY = (minTop + maxBottom) / 2;
@@ -236,11 +243,24 @@ function parseTsvOutput(tsv: string, imgWidth: number, imgHeight: number): OcrRe
   else if (xPercentRaw > 0.62) textAlign = "right";
   else textAlign = "center";
 
+  // Estimate font size from word heights
+  // Word height ≈ cap height. Font size ≈ word height * 1.15 (ascender ratio)
+  // Frontend scales: scaledFontSize = fontSize * (canvasWidth / 400)
+  // OCR was done at SCALED_W (800px), so: fontSize = wordHeight * 1.15 * (400 / 800)
+  const REFERENCE_WIDTH = 400; // frontend reference width
+  let fontSize = 32; // default
+  if (allWordHeights.length > 0) {
+    allWordHeights.sort((a, b) => a - b);
+    const medianHeight = allWordHeights[Math.floor(allWordHeights.length / 2)];
+    fontSize = Math.round(medianHeight * 1.15 * (REFERENCE_WIDTH / imgWidth));
+  }
+
   return {
     text: textLines.join("\n"),
     yPercent,
     xPercent,
     textAlign,
+    fontSize,
   };
 }
 
@@ -320,7 +340,7 @@ async function ocrSlides(slides: TikTokSlide[]): Promise<void> {
 
         slide.style = {
           position,
-          fontSize: 32,
+          fontSize: result.fontSize,
           textAlign: result.textAlign,
           fontWeight: "600",
           textColor: "#ffffff",
