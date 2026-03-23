@@ -295,26 +295,14 @@ Bun.serve({
 
     // TikTok scraping endpoint
     if (path === "/api/tiktok/scrape" && req.method === "POST") {
-      const body = (await req.json()) as { url: string; offset?: number; limit?: number };
-      const tiktokUrl = body.url;
-      const offset = body.offset || 0;
-      const limit = body.limit || 10;
-
+      const { url: tiktokUrl } = (await req.json()) as { url: string };
       if (!tiktokUrl || !tiktokUrl.includes("tiktok.com")) {
         return Response.json({ error: "Invalid TikTok URL" }, { status: 400 });
       }
 
       try {
         const result = await scrapeTikTok(tiktokUrl);
-        const allSets = result.sets;
-        const page = allSets.slice(offset, offset + limit);
-        return Response.json({
-          sets: page,
-          total: allSets.length,
-          offset,
-          limit,
-          hasMore: offset + limit < allSets.length,
-        });
+        return Response.json(result);
       } catch (err: any) {
         return Response.json({ error: err.message }, { status: 500 });
       }

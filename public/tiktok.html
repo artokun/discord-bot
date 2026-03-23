@@ -677,37 +677,23 @@
       if (e.key === 'Enter') startScrape();
     });
 
-    // Pagination state for profile scrapes
-    let lastScrapeUrl = '';
-    let scrapeOffset = 0;
-    let scrapeTotal = 0;
-    const SCRAPE_LIMIT = 10;
-
-    async function startScrape(loadMore = false) {
-      const url = loadMore ? lastScrapeUrl : scrapeUrlInput.value.trim();
+    async function startScrape() {
+      const url = scrapeUrlInput.value.trim();
       if (!url) {
         showToast('Paste a TikTok URL first', true);
         return;
       }
 
-      if (!loadMore) {
-        scrapeOffset = 0;
-        scrapeTotal = 0;
-        lastScrapeUrl = url;
-      }
-
       scrapeBtn.disabled = true;
-      const loadMoreBtn = $('loadMoreBtn');
-      if (loadMoreBtn) loadMoreBtn.disabled = true;
       scrapeLoading.classList.remove('hidden');
-      $('scrapeStatus').textContent = loadMore ? 'Loading more...' : 'Scraping TikTok...';
+      $('scrapeStatus').textContent = 'Scraping TikTok...';
       $('scrapeProgressFill').style.width = '30%';
 
       try {
         const response = await fetch('/api/tiktok/scrape', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, offset: scrapeOffset, limit: SCRAPE_LIMIT }),
+          body: JSON.stringify({ url }),
         });
 
         $('scrapeProgressFill').style.width = '80%';
@@ -721,8 +707,6 @@
         $('scrapeProgressFill').style.width = '100%';
 
         const sets = data.sets || (Array.isArray(data) ? data : [data]);
-        scrapeTotal = data.total || sets.length;
-        scrapeOffset += sets.length;
 
         let totalSlides = 0;
         for (const set of sets) {
@@ -752,43 +736,14 @@
         }
 
         renderCaptionSets();
-        if (!loadMore) scrapeUrlInput.value = '';
-
-        const remaining = scrapeTotal - scrapeOffset;
-        if (data.hasMore) {
-          showToast(`Loaded ${sets.length} set(s) — ${remaining} more available`);
-        } else {
-          showToast(`Scraped ${scrapeOffset} set(s) with ${totalSlides} slides`);
-        }
-
-        // Show/hide Load More button
-        updateLoadMoreButton(data.hasMore);
+        scrapeUrlInput.value = '';
+        showToast(`Scraped ${sets.length} set(s) with ${totalSlides} slides`);
       } catch (err) {
         showToast(err.message || 'Scrape failed', true);
       } finally {
         scrapeBtn.disabled = false;
         scrapeLoading.classList.add('hidden');
         $('scrapeProgressFill').style.width = '0%';
-      }
-    }
-
-    function updateLoadMoreButton(hasMore) {
-      let btn = $('loadMoreBtn');
-      if (hasMore) {
-        if (!btn) {
-          btn = document.createElement('button');
-          btn.id = 'loadMoreBtn';
-          btn.className = 'btn btn-secondary btn-sm';
-          btn.style.cssText = 'width:100%;margin-top:0.5rem';
-          btn.addEventListener('click', () => startScrape(true));
-          // Insert after the scrape section
-          scrapeBtn.closest('.card')?.appendChild(btn);
-        }
-        btn.textContent = `Load More (${scrapeTotal - scrapeOffset} remaining)`;
-        btn.disabled = false;
-        btn.classList.remove('hidden');
-      } else if (btn) {
-        btn.classList.add('hidden');
       }
     }
 
