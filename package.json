@@ -8,6 +8,7 @@
     "register": "bun run src/commands/register.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
     "discord.js": "^14.18.0",
     "zod": "^3.24.0"
   },

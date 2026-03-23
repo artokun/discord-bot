@@ -713,7 +713,7 @@
             source: url,
             title: set.title || set.description || '',
             slides: (set.slides || []).map(slide => ({
-              text: slide.text || '',
+              text: (slide.text || '').replace(/\n/g, ' '),
               style: slide.style || (slide.position ? {
                 position: slide.position || 'bottom',
                 fontSize: parseFontSize(slide.fontSize),
